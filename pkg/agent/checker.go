@@ -1,4 +1,3 @@
-// pkg/agent/checker.go
 package agent
 
 import (
@@ -7,9 +6,6 @@ import (
 	"net"
 	"os/exec"
 	"strings"
-	"time"
-
-	"github.com/mfreeman451/homemon"
 )
 
 type ProcessChecker struct {

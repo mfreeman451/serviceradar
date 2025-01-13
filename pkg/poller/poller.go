@@ -1,4 +1,3 @@
-// pkg/poller/poller.go
 package poller
 
 import (
@@ -6,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	pb "github.com/mfreeman451/homemon/proto"
+	"github.com/mfreeman451/homemon/proto"
 	"google.golang.org/grpc"
 )
 
@@ -19,7 +18,7 @@ type Config struct {
 
 type Poller struct {
 	config      Config
-	cloudClient pb.PollerServiceClient
+	cloudClient proto.PollerServiceClient
 }
 
 func New(config Config) (*Poller, error) {
@@ -30,19 +29,19 @@ func New(config Config) (*Poller, error) {
 
 	return &Poller{
 		config:      config,
-		cloudClient: pb.NewPollerServiceClient(conn),
+		cloudClient: proto.NewPollerServiceClient(conn),
 	}, nil
 }
 
-func (p *Poller) pollAgent(ctx context.Context, agentAddr string) (*pb.StatusResponse, error) {
+func (p *Poller) pollAgent(ctx context.Context, agentAddr string) (*proto.StatusResponse, error) {
 	conn, err := grpc.Dial(agentAddr, grpc.WithInsecure())
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 
-	client := pb.NewAgentServiceClient(conn)
-	return client.GetStatus(ctx, &pb.StatusRequest{ServiceName: "nginx"})
+	client := proto.NewAgentServiceClient(conn)
+	return client.GetStatus(ctx, &proto.StatusRequest{ServiceName: "nginx"})
 }
 
 func (p *Poller) Start(ctx context.Context) error {
@@ -62,13 +61,13 @@ func (p *Poller) Start(ctx context.Context) error {
 }
 
 func (p *Poller) poll(ctx context.Context) error {
-	statuses := make([]*pb.ServiceStatus, 0)
+	statuses := make([]*proto.ServiceStatus, 0)
 
 	for name, addr := range p.config.Agents {
 		status, err := p.pollAgent(ctx, addr)
 		if err != nil {
 			log.Printf("Error polling agent %s: %v", name, err)
-			statuses = append(statuses, &pb.ServiceStatus{
+			statuses = append(statuses, &proto.ServiceStatus{
 				ServiceName: name,
 				Available:   false,
 				Message:     err.Error(),
@@ -76,14 +75,14 @@ func (p *Poller) poll(ctx context.Context) error {
 			continue
 		}
 
-		statuses = append(statuses, &pb.ServiceStatus{
+		statuses = append(statuses, &proto.ServiceStatus{
 			ServiceName: name,
 			Available:   status.Available,
 			Message:     status.Message,
 		})
 	}
 
-	_, err := p.cloudClient.ReportStatus(ctx, &pb.PollerStatusRequest{
+	_, err := p.cloudClient.ReportStatus(ctx, &proto.PollerStatusRequest{
 		Services:  statuses,
 		PollerId:  p.config.PollerID,
 		Timestamp: time.Now().Unix(),

@@ -6,13 +6,13 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/mfreeman451/homemon/proto"
+	"github.com/mfreeman451/homemon/proto"
 )
 
 type AlertFunc func(pollerID string, duration time.Duration)
 
 type Server struct {
-	pb.UnimplementedPollerServiceServer
+	proto.UnimplementedPollerServiceServer
 	mu             sync.RWMutex
 	lastSeen       map[string]time.Time
 	alertThreshold time.Duration
@@ -27,7 +27,7 @@ func NewServer(alertThreshold time.Duration, alertFunc AlertFunc) *Server {
 	}
 }
 
-func (s *Server) ReportStatus(ctx context.Context, req *pb.PollerStatusRequest) (*pb.PollerStatusResponse, error) {
+func (s *Server) ReportStatus(ctx context.Context, req *proto.PollerStatusRequest) (*proto.PollerStatusResponse, error) {
 	s.mu.Lock()
 	s.lastSeen[req.PollerId] = time.Unix(req.Timestamp, 0)
 	s.mu.Unlock()
@@ -38,7 +38,7 @@ func (s *Server) ReportStatus(ctx context.Context, req *pb.PollerStatusRequest) 
 		}
 	}
 
-	return &pb.PollerStatusResponse{Received: true}, nil
+	return &proto.PollerStatusResponse{Received: true}, nil
 }
 
 func (s *Server) MonitorPollers(ctx context.Context) {

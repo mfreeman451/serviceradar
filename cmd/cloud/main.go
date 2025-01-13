@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/mfreeman451/homemon/pkg/cloud"
-	pb "github.com/mfreeman451/homemon/proto"
+	"github.com/mfreeman451/homemon/proto"
 	"google.golang.org/grpc"
 )
 
@@ -27,7 +27,7 @@ func main() {
 
 	server := grpc.NewServer()
 	cloudServer := cloud.NewServer(5*time.Minute, alertFunc)
-	pb.RegisterPollerServiceServer(server, cloudServer)
+	proto.RegisterPollerServiceServer(server, cloudServer)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

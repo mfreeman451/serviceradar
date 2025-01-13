@@ -4,9 +4,9 @@ import (
 	"log"
 	"net"
 
-	"github.com/mfreeman451/homemon"
 	"github.com/mfreeman451/homemon/pkg/agent"
-	pb "github.com/mfreeman451/homemon/proto"
+	"github.com/mfreeman451/homemon/pkg/checker"
+	"github.com/mfreeman451/homemon/proto"
 	"google.golang.org/grpc"
 )
 
@@ -16,13 +16,13 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
-	checkers := map[string]homemon.Checker{
+	checkers := map[string]checker.Checker{
 		"nginx": &agent.ProcessChecker{ProcessName: "nginx"},
 		"ssh":   &agent.PortChecker{Host: "localhost", Port: 22},
 	}
 
 	server := grpc.NewServer()
-	pb.RegisterAgentServiceServer(server, agent.NewServer(checkers))
+	proto.RegisterAgentServiceServer(server, agent.NewServer(checkers))
 
 	log.Printf("Agent server listening on :50051")
 	if err := server.Serve(lis); err != nil {

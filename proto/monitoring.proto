@@ -1,0 +1,37 @@
+syntax = "proto3";
+package monitoring;
+
+option go_package = "github.com/mfreeman451/homemon/proto";
+
+service AgentService {
+  rpc GetStatus(StatusRequest) returns (StatusResponse) {}
+}
+
+service PollerService {
+  rpc ReportStatus(PollerStatusRequest) returns (PollerStatusResponse) {}
+}
+
+message StatusRequest {
+  string service_name = 1;
+}
+
+message StatusResponse {
+  bool available = 1;
+  string message = 2;
+}
+
+message PollerStatusRequest {
+  repeated ServiceStatus services = 1;
+  string poller_id = 2;
+  int64 timestamp = 3;
+}
+
+message PollerStatusResponse {
+  bool received = 1;
+}
+
+message ServiceStatus {
+  string service_name = 1;
+  bool available = 2;
+  string message = 3;
+}

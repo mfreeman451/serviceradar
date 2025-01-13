@@ -142,3 +142,7 @@ pnpm-lock.yaml
 elements/
 .bin/
 
+# binaries
+./poller
+./agent
+./cloud

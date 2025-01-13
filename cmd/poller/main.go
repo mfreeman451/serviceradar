@@ -18,7 +18,7 @@ func main() {
 		Agents: map[string]string{
 			"local-agent": "localhost:50051",
 		},
-		CloudAddress: "cloud-service:50052",
+		CloudAddress: "172.233.208.210:50052",
 		PollInterval: 30 * time.Second,
 		PollerID:     "home-poller-1",
 	}

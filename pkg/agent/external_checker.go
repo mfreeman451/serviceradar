@@ -1,11 +1,14 @@
+// pkg/agent/external_checker.go
 package agent
 
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
@@ -19,22 +22,42 @@ type ExternalChecker struct {
 
 // NewExternalChecker creates a new checker that connects to an external process
 func NewExternalChecker(name, address string) (*ExternalChecker, error) {
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	log.Printf("Creating new external checker %s at %s", name, address)
+
+	// Create gRPC connection with proper options
+	conn, err := grpc.Dial(
+		address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+		grpc.WithTimeout(5*time.Second),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to external checker: %w", err)
 	}
 
-	return &ExternalChecker{
+	checker := &ExternalChecker{
 		name:       name,
 		address:    address,
 		client:     grpc_health_v1.NewHealthClient(conn),
 		connection: conn,
-	}, nil
+	}
+
+	// Test the connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = checker.client.Check(ctx, &grpc_health_v1.HealthCheckRequest{})
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("initial health check failed: %w", err)
+	}
+
+	log.Printf("Successfully created external checker %s", name)
+	return checker, nil
 }
 
 // Check implements the checker.Checker interface
 func (e *ExternalChecker) Check(ctx context.Context) (bool, string) {
-	// Add timeout to context
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 

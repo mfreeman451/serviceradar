@@ -8,7 +8,7 @@ import (
 )
 
 type Server struct {
-	pb.UnimplementedAgentServiceServer
+	proto.UnimplementedAgentServiceServer
 	checkers map[string]checker.Checker
 }
 

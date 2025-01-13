@@ -4,9 +4,9 @@ import (
 	"log"
 	"net"
 
-	pb "github.com/mfreeman45/homemon/proto"
 	"github.com/mfreeman451/homemon"
 	"github.com/mfreeman451/homemon/pkg/agent"
+	pb "github.com/mfreeman451/homemon/proto"
 	"google.golang.org/grpc"
 )
 

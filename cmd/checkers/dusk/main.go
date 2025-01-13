@@ -1,3 +1,4 @@
+// cmd/checkers/dusk/main.go
 package main
 
 import (
@@ -5,12 +6,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -20,31 +22,50 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
-type ConfigFile struct {
-	NodeAddress string `json:"node_address"`
-	Timeout     string `json:"timeout"`
-	ListenAddr  string `json:"listen_addr"`
-}
-
 type Config struct {
-	NodeAddress string
-	Timeout     time.Duration
-	ListenAddr  string
+	NodeAddress string        `json:"node_address"`
+	Timeout     time.Duration `json:"timeout"` // Keep as time.Duration
+	ListenAddr  string        `json:"listen_addr"`
 }
 
 type DuskChecker struct {
-	config    Config
-	ws        *websocket.Conn
-	sessionID string
-	lastBlock time.Time
-	mu        sync.RWMutex
-	done      chan struct{}
+	config     Config
+	ws         *websocket.Conn
+	sessionID  string
+	lastBlock  time.Time
+	mu         sync.RWMutex
+	done       chan struct{}
+	pingTicker *time.Ticker
 }
 
-// HealthServer implements the gRPC health check service
 type HealthServer struct {
 	grpc_health_v1.UnimplementedHealthServer
 	checker *DuskChecker
+}
+
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type Alias Config // Create alias to avoid recursion
+	aux := &struct {
+		Timeout string `json:"timeout"`
+		*Alias
+	}{
+		Alias: (*Alias)(c),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	// Parse the timeout string into a duration
+	if aux.Timeout != "" {
+		duration, err := time.ParseDuration(aux.Timeout)
+		if err != nil {
+			return fmt.Errorf("invalid timeout format: %w", err)
+		}
+		c.Timeout = duration
+	}
+
+	return nil
 }
 
 func (s *HealthServer) Check(ctx context.Context, req *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
@@ -52,15 +73,13 @@ func (s *HealthServer) Check(ctx context.Context, req *grpc_health_v1.HealthChec
 	defer s.checker.mu.RUnlock()
 
 	if s.checker.ws == nil {
-		log.Printf("Health check failed: WebSocket connection not established")
 		return &grpc_health_v1.HealthCheckResponse{
 			Status: grpc_health_v1.HealthCheckResponse_NOT_SERVING,
-		}, nil
+		}, fmt.Errorf("no websocket connection established")
 	}
 
 	if s.checker.lastBlock.IsZero() {
-		// Connected but haven't received any blocks yet
-		log.Printf("Health check warning: Connected but no blocks received yet")
+		log.Printf("Health check warning: Connected but no blocks received yet. Session ID: %s", s.checker.sessionID)
 		return &grpc_health_v1.HealthCheckResponse{
 			Status: grpc_health_v1.HealthCheckResponse_NOT_SERVING,
 		}, nil
@@ -68,13 +87,13 @@ func (s *HealthServer) Check(ctx context.Context, req *grpc_health_v1.HealthChec
 
 	timeSinceLastBlock := time.Since(s.checker.lastBlock)
 	if timeSinceLastBlock > s.checker.config.Timeout {
-		log.Printf("Health check failed: No blocks received in %v", timeSinceLastBlock)
+		log.Printf("Health check failed: No blocks received in %v. Last block at: %v",
+			timeSinceLastBlock, s.checker.lastBlock.Format(time.RFC3339))
 		return &grpc_health_v1.HealthCheckResponse{
 			Status: grpc_health_v1.HealthCheckResponse_NOT_SERVING,
 		}, nil
 	}
 
-	// Everything is good
 	log.Printf("Health check passed: Last block received %v ago", timeSinceLastBlock)
 	return &grpc_health_v1.HealthCheckResponse{
 		Status: grpc_health_v1.HealthCheckResponse_SERVING,
@@ -87,7 +106,6 @@ func main() {
 	configFile := flag.String("config", "/etc/homemon/checkers/dusk.json", "Path to config file")
 	flag.Parse()
 
-	// Load config
 	log.Printf("Loading config from: %s", *configFile)
 	config, err := loadConfig(*configFile)
 	if err != nil {
@@ -95,19 +113,16 @@ func main() {
 	}
 	log.Printf("Loaded config: %+v", config)
 
-	// Create checker
-	log.Printf("Creating Dusk checker...")
 	checker := &DuskChecker{
 		config: config,
 		done:   make(chan struct{}),
 	}
 
-	// Start monitoring
+	// Start monitoring Dusk node
 	log.Printf("Starting monitoring...")
 	if err := checker.startMonitoring(); err != nil {
 		log.Fatalf("Failed to start monitoring: %v", err)
 	}
-	log.Printf("Monitoring started successfully")
 
 	// Start gRPC server
 	log.Printf("Starting gRPC server on %s", config.ListenAddr)
@@ -117,7 +132,8 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer()
-	grpc_health_v1.RegisterHealthServer(grpcServer, &HealthServer{checker: checker})
+	healthServer := &HealthServer{checker: checker}
+	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
 	log.Printf("Registered health server")
 
 	// Handle shutdown gracefully
@@ -127,54 +143,19 @@ func main() {
 	go func() {
 		sig := <-sigCh
 		log.Printf("Received signal %v, shutting down", sig)
-		checker.Close()
+		close(checker.done)
 		grpcServer.GracefulStop()
 	}()
 
-	log.Printf("Dusk checker listening on %s", config.ListenAddr)
+	log.Printf("Dusk checker is ready")
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
 }
 
-func loadConfig(path string) (Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return Config{}, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	var fileConfig ConfigFile
-	if err := json.Unmarshal(data, &fileConfig); err != nil {
-		return Config{}, fmt.Errorf("failed to parse config: %w", err)
-	}
-
-	// Parse the timeout string into a duration
-	timeout, err := time.ParseDuration(fileConfig.Timeout)
-	if err != nil {
-		return Config{}, fmt.Errorf("invalid timeout value %q: %w", fileConfig.Timeout, err)
-	}
-
-	config := Config{
-		NodeAddress: fileConfig.NodeAddress,
-		Timeout:     timeout,
-		ListenAddr:  fileConfig.ListenAddr,
-	}
-
-	// Set defaults if needed
-	if config.Timeout == 0 {
-		config.Timeout = 5 * time.Minute
-	}
-	if config.ListenAddr == "" {
-		config.ListenAddr = "127.0.0.1:50052"
-	}
-
-	return config, nil
-}
-
 func (d *DuskChecker) startMonitoring() error {
+	// First establish WebSocket connection
 	log.Printf("Connecting to Dusk node at %s", d.config.NodeAddress)
-
-	// Connect to WebSocket
 	u := url.URL{Scheme: "ws", Host: d.config.NodeAddress, Path: "/on"}
 	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
@@ -182,7 +163,7 @@ func (d *DuskChecker) startMonitoring() error {
 	}
 	d.ws = conn
 
-	// Read initial session ID
+	// Read session ID
 	_, message, err := d.ws.ReadMessage()
 	if err != nil {
 		d.ws.Close()
@@ -191,41 +172,45 @@ func (d *DuskChecker) startMonitoring() error {
 	d.sessionID = string(message)
 	log.Printf("Received session ID: %s", d.sessionID)
 
-	// Subscribe to block events using session ID
-	if err := d.subscribeToBlocks(); err != nil {
-		d.ws.Close()
-		return fmt.Errorf("failed to subscribe to blocks: %w", err)
+	// Create HTTP client for subscription
+	client := &http.Client{}
+
+	// Prepare subscription request according to RUES spec
+	subscribeURL := fmt.Sprintf("http://%s/on/blocks/accepted", d.config.NodeAddress)
+	req, err := http.NewRequest("GET", subscribeURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create subscription request: %w", err)
 	}
 
+	// Add required headers as per RUES spec
+	req.Header.Set("Rusk-Version", "1.0")
+	req.Header.Set("Rusk-Session-Id", d.sessionID)
+
+	log.Printf("Sending subscription request to: %s", subscribeURL)
+	log.Printf("With headers: %v", req.Header)
+
+	// Send subscription request
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("subscription request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("subscription failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	log.Printf("Successfully subscribed to block events")
+
+	// Start listening for events
 	go d.listenForEvents()
-	return nil
-}
-
-func (d *DuskChecker) subscribeToBlocks() error {
-	// Format subscription request with session ID
-	subscribeReq := struct {
-		Method  string `json:"method"`
-		Path    string `json:"path"`
-		Headers struct {
-			RuskSessionID string `json:"Rusk-Session-Id"`
-		} `json:"headers"`
-	}{
-		Method: "GET",
-		Path:   "/on/blocks/accepted",
-	}
-	subscribeReq.Headers.RuskSessionID = d.sessionID
-
-	log.Printf("Subscribing to blocks with request: %+v", subscribeReq)
-	if err := d.ws.WriteJSON(subscribeReq); err != nil {
-		return fmt.Errorf("failed to subscribe to blocks: %w", err)
-	}
-	log.Printf("Block subscription request sent")
 
 	return nil
 }
 
 func (d *DuskChecker) listenForEvents() {
-	log.Printf("Starting event listener")
+	log.Printf("Starting event listener for websocket connection")
 	defer d.ws.Close()
 
 	for {
@@ -235,40 +220,52 @@ func (d *DuskChecker) listenForEvents() {
 		default:
 			messageType, data, err := d.ws.ReadMessage()
 			if err != nil {
-				log.Printf("Error reading message: %v", err)
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					log.Printf("Websocket error: %v", err)
+				}
 				return
 			}
 
-			// Log raw message for debugging
-			log.Printf("Received message type %d: %s", messageType, string(data))
+			log.Printf("Received websocket message - Type: %d, Length: %d bytes", messageType, len(data))
 
-			// Parse block events - they might come in different formats
-			// For now, just look for block acceptance indicators
-			if strings.Contains(string(data), "/on/blocks/accepted") {
-				log.Printf("Block acceptance event detected")
+			// For binary messages (which is what RUES uses according to docs)
+			if messageType == websocket.BinaryMessage {
+				log.Printf("Received binary message. First 100 bytes: %x", data[:min(len(data), 100)])
+
+				// According to RUES docs, events are returned as raw binary data
+				// Update the last block time as this indicates we received a block event
 				d.mu.Lock()
 				d.lastBlock = time.Now()
 				d.mu.Unlock()
+				log.Printf("Updated last block time to: %v", d.lastBlock)
+				continue
 			}
+
+			// For text messages (debugging)
+			log.Printf("Raw message: %s", string(data))
 		}
 	}
 }
 
-func (d *DuskChecker) isHealthy() bool {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	if d.lastBlock.IsZero() {
-		return false
+// Helper function for min
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
-
-	return time.Since(d.lastBlock) <= d.config.Timeout
+	return b
 }
 
-func (d *DuskChecker) Close() error {
-	close(d.done)
-	if d.ws != nil {
-		return d.ws.Close()
+func loadConfig(path string) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("failed to read config: %w", err)
 	}
-	return nil
+
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil {
+		return Config{}, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	log.Printf("Loaded config with timeout: %v", config.Timeout)
+	return config, nil
 }

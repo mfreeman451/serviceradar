@@ -1,4 +1,3 @@
-// pkg/agent/external_checker.go
 package agent
 
 import (

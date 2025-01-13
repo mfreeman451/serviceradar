@@ -61,8 +61,10 @@ func main() {
 
 	// Initialize built-in checkers
 	checkers := map[string]checker.Checker{
-		"nginx": &agent.ProcessChecker{ProcessName: "nginx"},
-		"ssh":   &agent.PortChecker{Host: "localhost", Port: 22},
+		// TODO: update this so it is not hard coded.
+		// Check to see if the `rusk` process is running
+		"rusk": &agent.ProcessChecker{ProcessName: "rusk"},
+		"ssh":  &agent.PortChecker{Host: "localhost", Port: 22},
 	}
 
 	// Load external checkers

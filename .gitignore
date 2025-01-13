@@ -146,3 +146,9 @@ elements/
 ./poller
 ./agent
 ./cloud
+
+./dist
+
+# debian packages
+*.deb
+./homemon-dusk_*

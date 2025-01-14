@@ -1,4 +1,9 @@
-# HomeMon
+```
+ __                                              
+|  |--.-----.--------.-----.--------.-----.-----.
+|     |  _  |        |  -__|        |  _  |     |
+|__|__|_____|__|__|__|_____|__|__|__|_____|__|__|
+```
 
 HomeMon is a distributed network monitoring system designed for home networks. It provides real-time monitoring of internal services, with cloud-based alerting capabilities to ensure you stay informed even during network or power outages.
 

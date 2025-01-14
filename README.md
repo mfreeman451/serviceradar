@@ -111,6 +111,27 @@ checkers := map[string]checker.Checker{
 }
 ```
 
+**JSON Configuration files**
+
+These need to go on the agent/dusk node.
+
+```shell
+root@dusk01:/home/duskadmin# cat /etc/homemon/checkers/dusk.json
+{
+    "name": "dusk",
+    "node_address": "localhost:8080",
+    "timeout": "5m",
+    "listen_addr": ":50052"
+}
+root@dusk01:/home/duskadmin# cat /etc/homemon/checkers/
+dusk.json      external.json
+root@dusk01:/home/duskadmin# cat /etc/homemon/checkers/external.json
+{
+    "name": "dusk",
+    "address": "localhost:50052"
+}
+```
+
 #### Poller Configuration
 ```go
 config := poller.Config{
@@ -120,6 +141,33 @@ config := poller.Config{
     CloudAddress: "cloud-service:50052",
     PollInterval: 30 * time.Second,
     PollerID:     "home-poller-1",
+}
+```
+
+**/etc/homemon/poller.json**
+```json
+{
+    "agents": {
+        "local-agent": {
+            "address": "192.168.2.22:50051",
+            "checks": [
+                {
+                    "type": "process",
+                    "details": "rusk"
+                },
+                {
+                    "type": "port",
+                    "port": 22
+                },
+                {
+                    "type": "dusk"
+                }
+            ]
+        }
+    },
+    "cloud_address": "172.233.208.210:50052",
+    "poll_interval": "30s",
+    "poller_id": "home-poller-1"
 }
 ```
 

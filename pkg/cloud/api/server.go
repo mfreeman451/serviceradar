@@ -3,15 +3,22 @@
 package api
 
 import (
+	"embed"
 	"encoding/json"
+	"io"
+	"io/fs"
 	"net/http"
+	"path"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
 )
 
-// Generic status types
+//go:embed web/dist/*
+var webContent embed.FS
+
 type ServiceStatus struct {
 	Name      string          `json:"name"`
 	Available bool            `json:"available"`
@@ -66,6 +73,46 @@ func (s *APIServer) setupRoutes() {
 	// Service-specific endpoints
 	s.router.HandleFunc("/api/nodes/{id}/services", s.getNodeServices).Methods("GET")
 	s.router.HandleFunc("/api/nodes/{id}/services/{service}", s.getServiceDetails).Methods("GET")
+
+	// Serve static files from embedded filesystem
+	fsys, err := fs.Sub(webContent, "web/dist")
+	if err != nil {
+		panic(err)
+	}
+
+	s.router.PathPrefix("/").Handler(spaHandler{
+		staticFS:   http.FS(fsys),
+		indexPath:  "index.html",
+		staticPath: "/",
+	})
+}
+
+type spaHandler struct {
+	staticFS   http.FileSystem
+	indexPath  string
+	staticPath string
+}
+
+func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Get the absolute path to prevent directory traversal
+	path := path.Clean(r.URL.Path)
+
+	// Try to serve the requested file
+	f, err := h.staticFS.Open(strings.TrimPrefix(path, "/"))
+	if err != nil {
+		// If file not found, serve index.html
+		index, err := h.staticFS.Open(h.indexPath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer index.Close()
+		http.ServeContent(w, r, h.indexPath, time.Time{}, index.(io.ReadSeeker))
+		return
+	}
+	defer f.Close()
+
+	http.ServeContent(w, r, path, time.Time{}, f.(io.ReadSeeker))
 }
 
 func (s *APIServer) getNodeHistory(w http.ResponseWriter, r *http.Request) {

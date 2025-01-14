@@ -50,7 +50,15 @@ type DuskChecker struct {
 
 type HealthServer struct {
 	grpc_health_v1.UnimplementedHealthServer
-	checker *DuskChecker
+	checker   *DuskChecker
+	startTime time.Time
+}
+
+func NewHealthServer(checker *DuskChecker) *HealthServer {
+	return &HealthServer{
+		checker:   checker,
+		startTime: time.Now(),
+	}
 }
 
 func (c *Config) UnmarshalJSON(data []byte) error {
@@ -82,6 +90,14 @@ func (s *HealthServer) Check(ctx context.Context, req *grpc_health_v1.HealthChec
 	s.checker.mu.RLock()
 	defer s.checker.mu.RUnlock()
 
+	// Give 30 seconds grace period during startup
+	if time.Since(s.startTime) < 30*time.Second {
+		log.Printf("Health check during startup grace period (%v elapsed)", time.Since(s.startTime))
+		return &grpc_health_v1.HealthCheckResponse{
+			Status: grpc_health_v1.HealthCheckResponse_SERVING,
+		}, nil
+	}
+
 	if s.checker.ws == nil {
 		return &grpc_health_v1.HealthCheckResponse{
 			Status: grpc_health_v1.HealthCheckResponse_NOT_SERVING,
@@ -104,7 +120,10 @@ func (s *HealthServer) Check(ctx context.Context, req *grpc_health_v1.HealthChec
 		}, nil
 	}
 
-	log.Printf("Health check passed: Last block received %v ago", timeSinceLastBlock)
+	log.Printf("Health check passed: Last block #%d received %v ago",
+		s.checker.lastBlockData.Height,
+		timeSinceLastBlock)
+
 	return &grpc_health_v1.HealthCheckResponse{
 		Status: grpc_health_v1.HealthCheckResponse_SERVING,
 	}, nil
@@ -142,7 +161,7 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer()
-	healthServer := &HealthServer{checker: checker}
+	healthServer := NewHealthServer(checker)
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
 	log.Printf("Registered health server")
 

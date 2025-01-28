@@ -44,7 +44,7 @@ func NewCaptureService(metrics metrics.MetricCollector) *CaptureService {
 	}
 }
 
-// RegisterPoller registers a poller's connection
+// RegisterPoller registers a poller's connection.
 func (s *CaptureService) RegisterPoller(pollerID string, conn *grpc.ClientConn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -58,7 +58,7 @@ func (s *CaptureService) RegisterPoller(pollerID string, conn *grpc.ClientConn) 
 	}
 }
 
-// CleanupPoller removes a poller and stops any active captures
+// CleanupPoller removes a poller and stops any active captures.
 func (s *CaptureService) CleanupPoller(pollerID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -85,21 +85,23 @@ func (s *CaptureService) CleanupPoller(pollerID string) {
 	}
 }
 
-// ListActiveCaptures returns all active captures
+// ListActiveCaptures returns all active captures.
 func (s *CaptureService) ListActiveCaptures() []*CaptureStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var active []*CaptureStatus
+
 	for _, status := range s.status {
 		if status.IsActive {
 			active = append(active, status)
 		}
 	}
+
 	return active
 }
 
-// GetCaptureStatus returns status for a specific capture
+// GetCaptureStatus returns status for a specific capture.
 func (s *CaptureService) GetCaptureStatus(nodeID string) (*CaptureStatus, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -108,10 +110,11 @@ func (s *CaptureService) GetCaptureStatus(nodeID string) (*CaptureStatus, error)
 	if !exists {
 		return nil, fmt.Errorf("no capture status found for node %s", nodeID)
 	}
+
 	return status, nil
 }
 
-// StartCapture starts a remote packet capture session
+// StartCapture starts a remote packet capture session.
 func (s *CaptureService) StartCapture(ctx context.Context, nodeID, iface string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -130,6 +133,7 @@ func (s *CaptureService) StartCapture(ctx context.Context, nodeID, iface string)
 	pollerConn, exists := s.pollerConn[nodeID]
 	if !exists {
 		status.Error = "no connection available"
+
 		return fmt.Errorf("no connection available for node %s", nodeID)
 	}
 
@@ -138,6 +142,7 @@ func (s *CaptureService) StartCapture(ctx context.Context, nodeID, iface string)
 	stream, err := client.ForwardPackets(ctx)
 	if err != nil {
 		status.Error = fmt.Sprintf("stream error: %v", err)
+
 		return fmt.Errorf("failed to start packet forwarding: %w", err)
 	}
 
@@ -148,6 +153,7 @@ func (s *CaptureService) StartCapture(ctx context.Context, nodeID, iface string)
 	t, err := tunnel.NewTunnel(conn)
 	if err != nil {
 		status.Error = fmt.Sprintf("tunnel error: %v", err)
+
 		return fmt.Errorf("failed to create tunnel: %w", err)
 	}
 	s.tunnels[nodeID] = t
@@ -163,7 +169,10 @@ func (s *CaptureService) StartCapture(ctx context.Context, nodeID, iface string)
 
 	// Start metrics collection
 	if s.metrics != nil {
-		s.metrics.AddMetric(nodeID, time.Now(), 0, "capture_start")
+		err := s.metrics.AddMetric(nodeID, time.Now(), 0, "capture_start")
+		if err != nil {
+			return err
+		}
 	}
 
 	// Start bridge
@@ -219,7 +228,10 @@ func (s *CaptureService) StopCapture(nodeID string) error {
 
 	// Record metric
 	if s.metrics != nil {
-		s.metrics.AddMetric(nodeID, time.Now(), 0, "capture_stop")
+		err := s.metrics.AddMetric(nodeID, time.Now(), 0, "capture_stop")
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -245,8 +257,14 @@ func (s *CaptureService) GetCaptureStats(nodeID string) (*proto.CaptureStats, er
 
 	// Record metrics
 	if s.metrics != nil {
-		s.metrics.AddMetric(nodeID, time.Now(), int64(stats.PacketsReceived), "capture_packets")
-		s.metrics.AddMetric(nodeID, time.Now(), int64(stats.BytesReceived), "capture_bytes")
+		err := s.metrics.AddMetric(nodeID, time.Now(), int64(stats.PacketsReceived), "capture_packets")
+		if err != nil {
+			return nil, err
+		}
+		err = s.metrics.AddMetric(nodeID, time.Now(), int64(stats.BytesReceived), "capture_bytes")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return stats, nil

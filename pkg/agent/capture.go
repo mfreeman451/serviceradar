@@ -1,4 +1,4 @@
-// pkg/agent/capture.go
+// Package agent pkg/agent/capture.go
 
 package agent
 
@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/pcap"
@@ -103,6 +104,9 @@ func (s *CaptureService) StartCapture(req *proto.CaptureRequest, stream proto.Ag
 func (s *CaptureService) StopCapture(ctx context.Context, req *proto.StopCaptureRequest) (*proto.CaptureStats, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	_, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 
 	// Find and close the handle
 	for iface, handle := range s.handles {

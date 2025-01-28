@@ -159,7 +159,7 @@ func RetryInterceptor(ctx context.Context,
 func (c *ClientConn) Network() string { return c.network }
 func (c *ClientConn) String() string  { return c.addr }
 
-// GetConnection returns the underlying gRPC connection
+// GetConnection returns the underlying gRPC connection.
 func (c *ClientConn) GetConnection() *grpc.ClientConn {
 	return c.conn
 }

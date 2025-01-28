@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockConn implements net.Conn for testing
+// mockConn implements net.Conn for testing.
 type mockConn struct {
 	readData  *bytes.Buffer
 	writeData *bytes.Buffer
@@ -44,11 +44,11 @@ func (m *mockConn) Close() error {
 	return nil
 }
 
-func (m *mockConn) LocalAddr() net.Addr                { return nil }
-func (m *mockConn) RemoteAddr() net.Addr               { return nil }
-func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
-func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
-func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
+func (*mockConn) LocalAddr() net.Addr                { return nil }
+func (*mockConn) RemoteAddr() net.Addr               { return nil }
+func (m *mockConn) SetDeadline(time.Time) error      { return nil }
+func (m *mockConn) SetReadDeadline(time.Time) error  { return nil }
+func (m *mockConn) SetWriteDeadline(time.Time) error { return nil }
 
 func TestNewTunnel(t *testing.T) {
 	tests := []struct {
@@ -128,7 +128,12 @@ func TestTunnel_StartPacketCapture(t *testing.T) {
 	mockConn := newMockConn()
 	tunnel, err := NewTunnel(mockConn)
 	require.NoError(t, err)
-	defer tunnel.Close()
+	defer func(tunnel Tunnel) {
+		err := tunnel.Close()
+		if err != nil {
+			t.Errorf("Failed to close tunnel: %v", err)
+		}
+	}(tunnel)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -154,7 +159,12 @@ func TestTunnel_GetPacketStream(t *testing.T) {
 	mockConn := newMockConn()
 	tunnel, err := NewTunnel(mockConn)
 	require.NoError(t, err)
-	defer tunnel.Close()
+	defer func(tunnel Tunnel) {
+		err := tunnel.Close()
+		if err != nil {
+			t.Errorf("Failed to close tunnel: %v", err)
+		}
+	}(tunnel)
 
 	ctx := context.Background()
 	stream, err := tunnel.GetPacketStream(ctx)

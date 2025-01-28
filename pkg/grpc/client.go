@@ -32,6 +32,7 @@ type ClientConn struct {
 	mu                sync.RWMutex
 	lastHealthDetails string
 	lastHealthCheck   time.Time
+	network           string
 }
 
 // NewClient creates a new gRPC client connection.
@@ -74,11 +75,6 @@ func WithMaxRetries(retries int) ClientOption {
 }
 
 func (c *ClientConn) GetGRPCClient() interface{} {
-	return c.conn
-}
-
-// GetConnection returns the underlying gRPC connection.
-func (c *ClientConn) GetConnection() *grpc.ClientConn {
 	return c.conn
 }
 
@@ -158,4 +154,12 @@ func RetryInterceptor(ctx context.Context,
 	}
 
 	return fmt.Errorf("all retry attempts failed: %w", lastErr)
+}
+
+func (c *ClientConn) Network() string { return c.network }
+func (c *ClientConn) String() string  { return c.addr }
+
+// GetConnection returns the underlying gRPC connection
+func (c *ClientConn) GetConnection() *grpc.ClientConn {
+	return c.conn
 }

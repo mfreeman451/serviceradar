@@ -15,6 +15,7 @@ import (
 
 	"github.com/mfreeman451/serviceradar/pkg/cloud/alerts"
 	"github.com/mfreeman451/serviceradar/pkg/cloud/api"
+	"github.com/mfreeman451/serviceradar/pkg/cloud/capture"
 	"github.com/mfreeman451/serviceradar/pkg/db"
 	"github.com/mfreeman451/serviceradar/pkg/grpc"
 	"github.com/mfreeman451/serviceradar/pkg/metrics"
@@ -70,6 +71,7 @@ type Server struct {
 	pollerPatterns []string
 	grpcServer     *grpc.Server
 	metrics        metrics.MetricCollector
+	captureService *capture.CaptureService
 }
 
 func NewServer(_ context.Context, config *Config) (*Server, error) {
@@ -107,6 +109,9 @@ func NewServer(_ context.Context, config *Config) (*Server, error) {
 		return nil, fmt.Errorf("%w: %w", errDatabaseError, err)
 	}
 
+	// Create capture service
+	captureService := capture.NewCaptureService()
+
 	server := &Server{
 		db:             database,
 		alertThreshold: config.AlertThreshold,
@@ -114,6 +119,7 @@ func NewServer(_ context.Context, config *Config) (*Server, error) {
 		ShutdownChan:   make(chan struct{}),
 		pollerPatterns: config.PollerPatterns,
 		metrics:        metricsManager,
+		captureService: captureService,
 	}
 
 	// Initialize webhooks
@@ -907,6 +913,10 @@ func (s *Server) MonitorPollers(ctx context.Context) {
 func (s *Server) ReportStatus(ctx context.Context, req *proto.PollerStatusRequest) (*proto.PollerStatusResponse, error) {
 	if req.PollerId == "" {
 		return nil, errEmptyPollerID
+	}
+
+	if conn, ok := grpc.ConnectionFromContext(ctx); ok {
+		s.captureService.RegisterPoller(req.PollerId, conn)
 	}
 
 	now := time.Unix(req.Timestamp, 0)

@@ -9,32 +9,36 @@ import (
 	"io"
 	"log"
 	"os"
+	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/hashicorp/yamux"
 	"github.com/mfreeman451/serviceradar/pkg/tunnel"
+	"github.com/mfreeman451/serviceradar/proto"
 )
 
 type WiresharkBridge struct {
 	pipePath string
-	session  *yamux.Session
+	stats    *proto.CaptureStats
+	done     chan struct{}
 }
 
-func NewWiresharkBridge(pipePath string) *WiresharkBridge {
+func NewWiresharkBridge(pipePath string) Bridge {
 	return &WiresharkBridge{
 		pipePath: pipePath,
+		stats: &proto.CaptureStats{
+			StartTime: time.Now().Unix(),
+		},
+		done: make(chan struct{}),
 	}
 }
 
 func (b *WiresharkBridge) Start(ctx context.Context, t tunnel.Tunnel) error {
-	// setup a context with a timeout
-	_, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
 	// Create named pipe for Wireshark
 	if err := syscall.Mkfifo(b.pipePath, 0666); err != nil {
-		return fmt.Errorf("failed to create pipe: %w", err)
+		if !os.IsExist(err) {
+			return fmt.Errorf("failed to create pipe: %w", err)
+		}
 	}
 
 	// Open pipe for writing
@@ -49,29 +53,59 @@ func (b *WiresharkBridge) Start(ctx context.Context, t tunnel.Tunnel) error {
 		return fmt.Errorf("failed to write pcap header: %w", err)
 	}
 
-	// Read packets from YAMUX session and write to pipe
-	stream, err := b.session.AcceptStream()
+	// Get packet stream from tunnel
+	stream, err := t.GetPacketStream(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to accept stream: %w", err)
+		return fmt.Errorf("failed to get packet stream: %w", err)
 	}
+	defer stream.Close()
 
 	buffer := make([]byte, 65536)
 	for {
-		n, err := stream.Read(buffer)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("Error reading from stream: %v", err)
-			continue
-		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-b.done:
+			return nil
+		default:
+			n, err := stream.Read(buffer)
+			if err == io.EOF {
+				return nil
+			}
+			if err != nil {
+				log.Printf("Error reading from stream: %v", err)
+				continue
+			}
 
-		if _, err := pipe.Write(buffer[:n]); err != nil {
-			return fmt.Errorf("failed to write to pipe: %w", err)
+			if _, err := pipe.Write(buffer[:n]); err != nil {
+				return fmt.Errorf("failed to write to pipe: %w", err)
+			}
+
+			atomic.AddUint64(&b.stats.PacketsReceived, 1)
+			atomic.AddUint64(&b.stats.BytesReceived, uint64(n))
 		}
 	}
+}
 
-	return nil
+func (b *WiresharkBridge) Close() error {
+	close(b.done)
+	b.stats.EndTime = time.Now().Unix()
+	return os.Remove(b.pipePath)
+}
+
+func (b *WiresharkBridge) GetStats() *proto.CaptureStats {
+	stats := &proto.CaptureStats{
+		PacketsReceived: atomic.LoadUint64(&b.stats.PacketsReceived),
+		BytesReceived:   atomic.LoadUint64(&b.stats.BytesReceived),
+		PacketsDropped:  atomic.LoadUint64(&b.stats.PacketsDropped),
+		StartTime:       b.stats.StartTime,
+	}
+	if b.stats.EndTime > 0 {
+		stats.EndTime = b.stats.EndTime
+	} else {
+		stats.EndTime = time.Now().Unix()
+	}
+	return stats
 }
 
 func (b *WiresharkBridge) writePcapHeader(w io.Writer) error {

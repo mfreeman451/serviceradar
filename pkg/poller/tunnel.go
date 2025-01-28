@@ -42,7 +42,7 @@ func (tm *TunnelManager) StartTunnel(ctx context.Context, nodeID string) error {
 
 	// 3. Set up YAMUX session
 	config := yamux.DefaultConfig()
-	session, err := yamux.Client(grpc.GrpcStreamToConn(cloudStream), config)
+	session, err := yamux.Client(grpc.StreamToConn(cloudStream), config)
 	if err != nil {
 		return fmt.Errorf("failed to create yamux session: %w", err)
 	}

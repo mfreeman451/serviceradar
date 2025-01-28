@@ -1,17 +1,33 @@
+// proto/monitoring.proto
+
 syntax = "proto3";
 
 package monitoring;
 
 option go_package = "github.com/mfreeman451/serviceradar/proto";
 
+// Agent Service - combines monitoring and packet capture.
 service AgentService {
+  // Monitoring methods
   rpc GetStatus(StatusRequest) returns (StatusResponse) {}
+
+  // Packet capture methods
+  rpc StartCapture(CaptureRequest) returns (stream PacketData) {}
+  rpc StopCapture(StopCaptureRequest) returns (CaptureStats) {}
 }
 
+// Poller Service.
 service PollerService {
   rpc ReportStatus(PollerStatusRequest) returns (PollerStatusResponse) {}
+  rpc ForwardPackets(stream PacketData) returns (stream PacketResponse) {}
 }
 
+message PacketResponse {
+  bool received = 1;
+  string error = 2;
+}
+
+// Status monitoring messages.
 message StatusRequest {
   string service_name = 1;  // Type of service to check (process, port, dusk)
   string service_type = 2;  // Type of service (process, port, grpc, etc)
@@ -21,10 +37,18 @@ message StatusRequest {
 
 message StatusResponse {
   bool available = 1;
-  string message = 2; // Raw data as JSON
+  string message = 2;      // Raw data as JSON
   string service_name = 3;
   string service_type = 4;
   int64 response_time = 5; // Raw response time in nanoseconds
+}
+
+message ServiceStatus {
+  string service_name = 1;
+  bool available = 2;
+  string message = 3;
+  string service_type = 4;
+  int64 response_time = 5;
 }
 
 message PollerStatusRequest {
@@ -37,14 +61,7 @@ message PollerStatusResponse {
   bool received = 1;
 }
 
-message ServiceStatus {
-  string service_name = 1;
-  bool available = 2;
-  string message = 3;
-  string service_type = 4;
-  int64 response_time = 5;
-}
-
+// Network sweep messages
 message SweepServiceStatus {
   string network = 1;         // CIDR range being swept
   int32 total_hosts = 2;      // Total hosts in range
@@ -56,4 +73,32 @@ message SweepServiceStatus {
 message PortStatus {
   int32 port = 1;
   int32 available = 2;        // Number of hosts with this port open
+}
+
+// Packet capture messages
+message CaptureRequest {
+  string interface = 1;
+  uint32 snap_len = 2;
+  bool promiscuous = 3;
+  string filter = 4;
+  string node_id = 5;
+}
+
+message StopCaptureRequest {
+  string node_id = 1;
+}
+
+message PacketData {
+  bytes data = 1;
+  int64 timestamp = 2;
+  string interface = 3;
+  uint32 sequence = 4;
+}
+
+message CaptureStats {
+  uint64 packets_received = 1;
+  uint64 bytes_received = 2;
+  uint64 packets_dropped = 3;
+  int64 start_time = 4;
+  int64 end_time = 5;
 }

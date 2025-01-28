@@ -73,6 +73,10 @@ func WithMaxRetries(retries int) ClientOption {
 	}
 }
 
+func (c *ClientConn) GetGRPCClient() interface{} {
+	return c.conn
+}
+
 // GetConnection returns the underlying gRPC connection.
 func (c *ClientConn) GetConnection() *grpc.ClientConn {
 	return c.conn

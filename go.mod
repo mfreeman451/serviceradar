@@ -3,8 +3,10 @@ module github.com/mfreeman451/serviceradar
 go 1.23.4
 
 require (
+	github.com/google/gopacket v1.1.19
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/hashicorp/yamux v0.1.2
 	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/stretchr/testify v1.9.0
 	go.uber.org/mock v0.5.0

@@ -10,9 +10,10 @@ import (
 
 // metricPoint represents a single metric data point.
 type metricPoint struct {
-	timestamp    int64
-	responseTime int64
-	serviceName  string
+	timestamp   int64
+	value       interface{}
+	valueType   models.MetricType
+	serviceName string
 }
 
 // LockFreeRingBuffer is a lock-free ring buffer implementation.
@@ -49,12 +50,13 @@ func NewLockFreeBuffer(size int) MetricStore {
 }
 
 // Add adds a new metric point to the buffer.
-func (b *LockFreeRingBuffer) Add(timestamp time.Time, responseTime int64, serviceName string) {
+func (b *LockFreeRingBuffer) Add(timestamp time.Time, value interface{}, valueType models.MetricType, serviceName string) {
 	// Create new point
 	newPoint := &metricPoint{
-		timestamp:    timestamp.UnixNano(),
-		responseTime: responseTime,
-		serviceName:  serviceName,
+		timestamp:   timestamp.UnixNano(),
+		value:       value,
+		valueType:   valueType,
+		serviceName: serviceName,
 	}
 
 	// Atomically increment the position and get the index
@@ -84,7 +86,8 @@ func (b *LockFreeRingBuffer) GetPoints() []models.MetricPoint {
 		// Get a MetricPoint from the pool
 		mp := b.pool.Get().(*models.MetricPoint)
 		mp.Timestamp = time.Unix(0, p.timestamp)
-		mp.ResponseTime = p.responseTime
+		mp.Value = p.value
+		mp.ValueType = p.valueType
 		mp.ServiceName = p.serviceName
 
 		points[i] = *mp
@@ -110,9 +113,9 @@ func (b *LockFreeRingBuffer) GetLastPoint() *models.MetricPoint {
 	}
 
 	mp := &models.MetricPoint{
-		Timestamp:    time.Unix(0, point.timestamp),
-		ResponseTime: point.responseTime,
-		ServiceName:  point.serviceName,
+		Timestamp:   time.Unix(0, point.timestamp),
+		Value:       point.value,
+		ServiceName: point.serviceName,
 	}
 
 	return mp

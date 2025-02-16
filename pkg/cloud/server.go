@@ -452,6 +452,7 @@ func (*Server) createNodeStatus(req *proto.PollerStatusRequest, now time.Time) *
 	}
 }
 
+// In pkg/cloud/server.go, update the SNMP and ICMP metric processing
 func (s *Server) processServices(pollerID string, apiStatus *api.NodeStatus, services []*proto.ServiceStatus, now time.Time) {
 	allServicesAvailable := true
 
@@ -464,7 +465,7 @@ func (s *Server) processServices(pollerID string, apiStatus *api.NodeStatus, ser
 		}
 
 		if !svc.Available {
-			allServicesAvailable = false // If ANY service is unavailable, set to false
+			allServicesAvailable = false
 		}
 
 		// Process JSON details if available
@@ -475,6 +476,70 @@ func (s *Server) processServices(pollerID string, apiStatus *api.NodeStatus, ser
 			}
 		}
 
+		// Handle SNMP metrics
+		if svc.ServiceType == "snmp" {
+			var snmpStatus struct {
+				OIDStatus map[string]struct {
+					LastValue interface{} `json:"last_value"`
+					Type      string      `json:"type"`
+				} `json:"oid_status"`
+			}
+
+			if err := json.Unmarshal([]byte(svc.Message), &snmpStatus); err != nil {
+				log.Printf("Failed to parse SNMP status for service %s: %v", svc.ServiceName, err)
+			} else {
+				for oidName, status := range snmpStatus.OIDStatus {
+					// Determine metric type based on SNMP type or value
+					var metricType models.MetricType
+					switch status.Type {
+					case "counter":
+						metricType = models.MetricTypeCounter
+					case "gauge":
+						metricType = models.MetricTypeGauge
+					default:
+						metricType = determineMetricType(status.LastValue)
+					}
+
+					if err := s.metrics.AddMetric(
+						pollerID,
+						now,
+						status.LastValue,
+						metricType,
+						oidName,
+					); err != nil {
+						log.Printf("Failed to add SNMP metric for %s: %v", oidName, err)
+					}
+				}
+			}
+		}
+
+		// Handle ICMP metrics
+		if svc.ServiceType == "icmp" {
+			var pingResult struct {
+				Host       string  `json:"host"`
+				Value      int64   `json:"response_time"`
+				PacketLoss float64 `json:"packet_loss"`
+				Available  bool    `json:"available"`
+			}
+
+			if err := json.Unmarshal([]byte(svc.Message), &pingResult); err != nil {
+				log.Printf("Failed to parse ICMP response for service %s: %v", svc.ServiceName, err)
+				continue
+			}
+
+			// ICMP response times are always numeric
+			if err := s.metrics.AddMetric(
+				pollerID,
+				now,
+				pingResult.Value,
+				models.MetricTypeNumeric,
+				svc.ServiceName,
+			); err != nil {
+				log.Printf("Failed to add ICMP metric for %s: %v", svc.ServiceName, err)
+				continue
+			}
+		}
+
 		if err := s.handleService(pollerID, &apiService, now); err != nil {
 			log.Printf("Error handling service %s: %v", svc.ServiceName, err)
 		}
@@ -482,7 +547,6 @@ func (s *Server) processServices(pollerID string, apiStatus *api.NodeStatus, ser
 		apiStatus.Services = append(apiStatus.Services, apiService)
 	}
 
-	// Only set IsHealthy based on ALL services.
 	apiStatus.IsHealthy = allServicesAvailable
 }
 
@@ -1111,6 +1175,7 @@ func (s *Server) ReportStatus(ctx context.Context, req *proto.PollerStatusReques
 				req.PollerId,
 				time.Now(),
 				pingResult.ResponseTime,
+				models.MetricTypeNumeric,
 				service.ServiceName,
 			); err != nil {
 				log.Printf("Failed to add ICMP metric for %s: %v", service.ServiceName, err)
@@ -1127,6 +1192,19 @@ func (s *Server) ReportStatus(ctx context.Context, req *proto.PollerStatusReques
 	s.updateAPIState(req.PollerId, apiStatus)
 
 	return &proto.PollerStatusResponse{Received: true}, nil
+}
+
+func determineMetricType(value interface{}) models.MetricType {
+	switch value.(type) {
+	case int, int32, int64, uint32, uint64, float32, float64:
+		return models.MetricTypeNumeric
+	case string:
+		return models.MetricTypeString
+	case bool:
+		return models.MetricTypeBoolean
+	default:
+		return models.MetricTypeNumeric
+	}
 }
 
 func getHostname() string {

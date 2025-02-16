@@ -25,3 +25,10 @@ type ServiceStatus struct {
 	Details     string    `json:"details"`
 	Timestamp   time.Time `json:"timestamp"`
 }
+
+type SNMPMetric struct {
+	NodeID    string    `json:"node_id"`
+	OIDName   string    `json:"oid_name"`
+	Value     float64   `json:"value"`
+	Timestamp time.Time `json:"timestamp"`
+}

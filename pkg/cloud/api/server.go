@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -105,8 +106,76 @@ func (s *APIServer) setupRoutes() {
 	s.router.HandleFunc("/api/nodes/{id}/services", s.getNodeServices).Methods("GET")
 	s.router.HandleFunc("/api/nodes/{id}/services/{service}", s.getServiceDetails).Methods("GET")
 
+	s.setupSNMPRoutes()
+
 	// Serve static files
 	s.setupStaticFileServing()
+}
+
+func (s *APIServer) setupSNMPRoutes() {
+	s.router.HandleFunc("/api/nodes/{id}/metrics/snmp", s.getSNMPMetrics).Methods("GET")
+}
+
+func (s *APIServer) getSNMPMetrics(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	nodeID := vars["id"]
+
+	oidName := r.URL.Query().Get("oid")
+	if oidName == "" {
+		http.Error(w, "OID parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	if s.metricsManager == nil {
+		log.Printf("Metrics not configured for node %s", nodeID)
+		http.Error(w, "Metrics not configured", http.StatusInternalServerError)
+		return
+	}
+
+	m := s.metricsManager.GetMetrics(nodeID)
+	if m == nil {
+		log.Printf("No metrics found for node %s", nodeID)
+		http.Error(w, "No metrics found", http.StatusNotFound)
+		return
+	}
+
+	filteredMetrics := make([]map[string]interface{}, 0)
+	for _, metric := range m {
+		if metric.ServiceName == oidName {
+			filteredMetrics = append(filteredMetrics, map[string]interface{}{
+				"timestamp": metric.Timestamp.Unix() * 1000,
+				"value":     metric.Value, // Now using Value instead of ResponseTime
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(filteredMetrics); err != nil {
+		log.Printf("Error encoding metrics response for node %s: %v", nodeID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+func parseTimeRange(timeRange string) (time.Duration, error) {
+	// Remove any whitespace and convert to lowercase
+	timeRange = strings.TrimSpace(strings.ToLower(timeRange))
+
+	// Parse time range
+	switch timeRange {
+	case "1h":
+		return time.Hour, nil
+	case "6h":
+		return 6 * time.Hour, nil
+	case "24h", "1d":
+		return 24 * time.Hour, nil
+	case "7d":
+		return 7 * 24 * time.Hour, nil
+	case "30d":
+		return 30 * 24 * time.Hour, nil
+	default:
+		// Try to parse as a duration string
+		return time.ParseDuration(timeRange)
+	}
 }
 
 func (s *APIServer) getNodeMetrics(w http.ResponseWriter, r *http.Request) {

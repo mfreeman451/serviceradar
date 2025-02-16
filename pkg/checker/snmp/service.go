@@ -287,6 +287,28 @@ func (s *SNMPService) handleDataPoint(targetName string, point DataPoint, aggreg
 	}
 }
 
+func (s *SNMPService) Check(ctx context.Context) (bool, string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// If no targets are configured, the service is not available
+	if len(s.collectors) == 0 {
+		return false, "no targets configured"
+	}
+
+	// Check each target's status
+	for name, collector := range s.collectors {
+		status := collector.GetStatus()
+
+		// If any target is unavailable, the service is considered unavailable
+		if !status.Available {
+			return false, fmt.Sprintf("target %s is unavailable: %s", name, status.Error)
+		}
+	}
+
+	return true, ""
+}
+
 // defaultCollectorFactory implements CollectorFactory.
 type defaultCollectorFactory struct{}
 

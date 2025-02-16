@@ -3,10 +3,21 @@ package models
 
 import "time"
 
+type MetricType string
+
+const (
+	MetricTypeNumeric MetricType = "numeric"
+	MetricTypeString  MetricType = "string"
+	MetricTypeBoolean MetricType = "boolean"
+	MetricTypeGauge   MetricType = "gauge"
+	MetricTypeCounter MetricType = "counter"
+)
+
 type MetricPoint struct {
-	Timestamp    time.Time `json:"timestamp"`
-	ResponseTime int64     `json:"response_time"`
-	ServiceName  string    `json:"service_name"`
+	Timestamp   time.Time   `json:"timestamp"`
+	Value       interface{} `json:"value"`
+	ValueType   MetricType  `json:"value_type"`
+	ServiceName string      `json:"service_name"`
 }
 
 type MetricsConfig struct {

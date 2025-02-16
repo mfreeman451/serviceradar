@@ -3,8 +3,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 
 	"github.com/mfreeman451/serviceradar/pkg/checker"
+	"github.com/mfreeman451/serviceradar/pkg/checker/snmp"
 )
 
 func initRegistry() checker.Registry {
@@ -44,6 +47,23 @@ func initRegistry() checker.Registry {
 		}
 
 		return NewExternalChecker(ctx, serviceName, "grpc", details)
+	})
+
+	// Register the SNMP checker
+	registry.Register("snmp", func(ctx context.Context, serviceName, details string) (checker.Checker, error) {
+		// Parse SNMP service details
+		cfg := &snmp.Config{}
+		if err := json.Unmarshal([]byte(details), cfg); err != nil {
+			return nil, fmt.Errorf("invalid SNMP config: %w", err)
+		}
+
+		// Create SNMP service
+		service, err := snmp.NewSNMPService(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SNMP service: %w", err)
+		}
+
+		return service, nil
 	})
 
 	return registry

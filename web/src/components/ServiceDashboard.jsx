@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import NetworkSweepView from './NetworkSweepView';
 import { PingStatus } from './NetworkStatus';
+import SNMPDashboard from "./SNMPDashboard.jsx";
 
 const ServiceDashboard = () => {
     const { nodeId, serviceName } = useParams();
@@ -145,70 +146,93 @@ const ServiceDashboard = () => {
         );
     };
 
+    // In ServiceDashboard.jsx, update the renderServiceContent function:
+
     const renderServiceContent = () => {
         if (!serviceData) return null;
 
-        // Handle sweep service type
-        if (serviceData.type === 'sweep') {
-            return (
-                <NetworkSweepView nodeId={nodeId} service={serviceData} standalone />
-            );
-        }
+        // Handle different service types
+        switch (serviceData.type) {
+            case 'sweep':
+                return <NetworkSweepView nodeId={nodeId} service={serviceData} standalone />;
 
-        // Handle ICMP service type
-        if (serviceData.type === 'icmp') {
-            return (
-                <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 transition-colors">
-                    <h3 className="text-lg font-semibold mb-4 text-gray-800 dark:text-gray-100">
-                        ICMP Status
-                    </h3>
-                    <PingStatus details={serviceData.message} />
-                </div>
-            );
-        }
+            case 'icmp':
+                return (
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 transition-colors">
+                        <h3 className="text-lg font-semibold mb-4 text-gray-800 dark:text-gray-100">
+                            ICMP Status
+                        </h3>
+                        <PingStatus details={serviceData.message} />
+                    </div>
+                );
 
-        // Handle other service types with their details
-        let details;
-        try {
-            details =
-                typeof serviceData.details === 'string'
-                    ? JSON.parse(serviceData.details)
-                    : serviceData.details;
-        } catch (e) {
-            console.error('Error parsing service details:', e);
-            return null;
-        }
+            case 'snmp':
+                // Debug the SNMP data
+                console.log('SNMP service data:', serviceData);
+                try {
+                    // Try to parse the details if they're a string
+                    const details = typeof serviceData.details === 'string'
+                        ? JSON.parse(serviceData.details)
+                        : serviceData.details;
 
-        if (!details) return null;
-
-        return (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {Object.entries(details)
-                    .filter(([key]) => key !== 'history')
-                    .map(([key, value]) => (
-                        <div
-                            key={key}
-                            className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 transition-colors"
-                        >
-                            <h3 className="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-100">
-                                {key
-                                    .split('_')
-                                    .map(
-                                        (word) => word.charAt(0).toUpperCase() + word.slice(1)
-                                    )
-                                    .join(' ')}
+                    // Pass the parsed details to SNMPDashboard
+                    return <SNMPDashboard
+                        nodeId={nodeId}
+                        service={{...serviceData, details}}
+                    />;
+                } catch (e) {
+                    console.error('Error parsing SNMP details:', e);
+                    return (
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 transition-colors">
+                            <h3 className="text-red-500 dark:text-red-400">
+                                Error parsing SNMP data: {e.message}
                             </h3>
-                            <div className="text-lg break-all text-gray-700 dark:text-gray-100">
-                                {typeof value === 'boolean'
-                                    ? value
-                                        ? 'Yes'
-                                        : 'No'
-                                    : value}
-                            </div>
+                            <pre className="mt-4 p-4 bg-gray-100 dark:bg-gray-900 rounded overflow-auto">
+                            {JSON.stringify(serviceData, null, 2)}
+                        </pre>
                         </div>
-                    ))}
-            </div>
-        );
+                    );
+                }
+
+            default:
+                // Handle other service types
+                let details;
+                try {
+                    details = typeof serviceData.details === 'string'
+                        ? JSON.parse(serviceData.details)
+                        : serviceData.details;
+                } catch (e) {
+                    console.error('Error parsing service details:', e);
+                    return null;
+                }
+
+                if (!details) return null;
+
+                return (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {Object.entries(details)
+                            .filter(([key]) => key !== 'history')
+                            .map(([key, value]) => (
+                                <div
+                                    key={key}
+                                    className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 transition-colors"
+                                >
+                                    <h3 className="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-100">
+                                        {key
+                                            .split('_')
+                                            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                                            .join(' ')}
+                                    </h3>
+                                    <div className="text-lg break-all text-gray-700 dark:text-gray-100">
+                                        {typeof value === 'boolean'
+                                            ? value ? 'Yes' : 'No'
+                                            : value}
+                                    </div>
+                                </div>
+                            ))}
+                    </div>
+                );
+        }
     };
 
     if (loading) {

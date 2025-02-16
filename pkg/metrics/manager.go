@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"container/list"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -61,7 +62,7 @@ func (m *Manager) CleanupStaleNodes(staleDuration time.Duration) {
 	})
 }
 
-func (m *Manager) AddMetric(nodeID string, timestamp time.Time, responseTime int64, serviceName string) error {
+func (m *Manager) AddMetric(nodeID string, timestamp time.Time, value interface{}, valueType models.MetricType, serviceName string) error {
 	if !m.config.Enabled {
 		return nil
 	}
@@ -83,7 +84,25 @@ func (m *Manager) AddMetric(nodeID string, timestamp time.Time, responseTime int
 		m.activeNodes.Add(1)
 	}
 
-	store.(MetricStore).Add(timestamp, responseTime, serviceName)
+	// Check if the valueType matches the type of value being stored
+	switch valueType {
+	case models.MetricTypeNumeric:
+		if _, ok := value.(int64); !ok {
+			return fmt.Errorf("invalid value type for MetricTypeNumeric: %T", value)
+		}
+	case models.MetricTypeString:
+		if _, ok := value.(string); !ok {
+			return fmt.Errorf("invalid value type for MetricTypeString: %T", value)
+		}
+	case models.MetricTypeBoolean:
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("invalid value type for MetricTypeBoolean: %T", value)
+		}
+	default:
+		return fmt.Errorf("unknown metric type: %s", valueType)
+	}
+
+	store.(MetricStore).Add(timestamp, value, valueType, serviceName)
 
 	return nil
 }

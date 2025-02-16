@@ -17,6 +17,8 @@ type Collector interface {
 	Stop() error
 	// GetResults returns a channel that provides data points
 	GetResults() <-chan DataPoint
+	// GetStatus returns the current status of the collector
+	GetStatus() TargetStatus
 }
 
 // Aggregator defines how to aggregate collected SNMP data.

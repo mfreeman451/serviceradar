@@ -108,85 +108,30 @@ var webContent embed.FS
 
 // setupStaticFileServing configures static file serving for the embedded web files.
 func (s *APIServer) setupStaticFileServing() {
-	// Setting up static file serving using the embedded FS
-	// This is used for non-containerized builds
 	fsys, err := fs.Sub(webContent, "web/dist")
 	if err != nil {
 		log.Printf("Error setting up static file serving: %v", err)
-
 		return
 	}
-
-	s.router.PathPrefix("/").Handler(http.FileServer(http.FS(fsys)))
-}
-
-func (s *APIServer) setupWebProxyRoutes(listenAddr string) {
-	// Create a separate router for web-to-API proxy
-	webProxyRouter := mux.NewRouter()
-
-	// Add common middleware but skip API key validation
-	webProxyRouter.Use(srHttp.CommonMiddleware)
-
-	// Create a closure to capture the listen address
-	proxyHandler := func(w http.ResponseWriter, r *http.Request) {
-		s.proxyAPIRequest(w, r, listenAddr)
-	}
-
-	// Create handlers for proxying API requests
-	webProxyRouter.PathPrefix("/web-api/").HandlerFunc(proxyHandler)
-
-	// Add the web proxy router to the main router
-	s.router.PathPrefix("/web-api/").Handler(webProxyRouter)
-}
-
-// proxyAPIRequest forwards an incoming request to an internal API server.
-func (s *APIServer) proxyAPIRequest(w http.ResponseWriter, r *http.Request, serverAddr string) {
-	// Build the internal API URL
-	apiPath := strings.TrimPrefix(r.URL.Path, "/web-api/")
-	internalURL := fmt.Sprintf("http://%s/api/%s", serverAddr, apiPath)
-
-	if r.URL.RawQuery != "" {
-		internalURL += "?" + r.URL.RawQuery
-	}
-
-	// Create a new request with context
-	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, internalURL, r.Body)
-	if err != nil {
-		s.writeError(w, "Failed to create proxy request", http.StatusInternalServerError)
-
-		return
-	}
-
-	// Set headers on the proxy request
-	s.setProxyHeaders(proxyReq, r)
-
-	// Execute the proxied request
-	resp, err := s.executeRequest(proxyReq)
-	if err != nil {
-		s.writeError(w, "Failed to execute request", http.StatusInternalServerError)
-
-		return
-	}
-
-	// Ensure the body is closed after we're done
-	defer func() {
-		if err = resp.Body.Close(); err != nil {
-			log.Printf("Failed to close response body: %v", err)
+	fileServer := http.FileServer(http.FS(fsys))
+	s.router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Static file handler for %s", r.URL.Path)
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/web-api/") {
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
-	}()
-
-	// Copy response to the client
-	if err = s.copyResponse(w, resp); err != nil {
-		s.writeError(w, "Failed to copy response body", http.StatusInternalServerError)
-
-		return
-	}
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
 // setProxyHeaders adds headers to the proxied request, including API key.
 func (*APIServer) setProxyHeaders(proxyReq, originalReq *http.Request) {
 	if apiKey := os.Getenv("API_KEY"); apiKey != "" {
+		log.Printf("Attaching API key: %s", apiKey)
+
 		proxyReq.Header.Set("X-API-Key", apiKey)
+	} else {
+		log.Println("API_KEY not set, skipping header attachment")
 	}
 
 	for name, values := range originalReq.Header {
@@ -230,36 +175,65 @@ func (*APIServer) writeError(w http.ResponseWriter, msg string, status int) {
 }
 
 func (s *APIServer) setupRoutes() {
-	// Create a middleware chain
+	log.Println("Setting up routes...")
+
+	// 1. Proxy routes first, no middleware
+	s.setupWebProxyRoutes("localhost:8090")
+	log.Println("Web proxy routes registered for /web-api/")
+
+	// 2. API routes with middleware on a subrouter
+	apiRouter := s.router.PathPrefix("/api").Subrouter()
 	middlewareChain := func(next http.Handler) http.Handler {
-		// Order matters: first API key check, then CORS headers
 		return srHttp.CommonMiddleware(srHttp.APIKeyMiddleware(next))
 	}
+	apiRouter.Use(middlewareChain)
+	apiRouter.HandleFunc("/nodes", s.getNodes).Methods("GET")
+	apiRouter.HandleFunc("/status", s.getSystemStatus).Methods("GET")
+	apiRouter.HandleFunc("/nodes/{id}", s.getNode).Methods("GET")
+	apiRouter.HandleFunc("/nodes/{id}/history", s.getNodeHistory).Methods("GET")
+	apiRouter.HandleFunc("/nodes/{id}/metrics", s.getNodeMetrics).Methods("GET")
+	apiRouter.HandleFunc("/nodes/{id}/services", s.getNodeServices).Methods("GET")
+	apiRouter.HandleFunc("/nodes/{id}/services/{service}", s.getServiceDetails).Methods("GET")
+	apiRouter.HandleFunc("/nodes/{id}/snmp", s.getSNMPData).Methods("GET")
+	log.Println("API routes registered with middleware under /api/")
 
-	// Add middleware to router
-	s.router.Use(middlewareChain)
-
-	// Basic endpoints
-	s.router.HandleFunc("/api/nodes", s.getNodes).Methods("GET")
-	s.router.HandleFunc("/api/nodes/{id}", s.getNode).Methods("GET")
-	s.router.HandleFunc("/api/status", s.getSystemStatus).Methods("GET")
-
-	// Node history endpoint
-	s.router.HandleFunc("/api/nodes/{id}/history", s.getNodeHistory).Methods("GET")
-
-	// Metrics endpoint
-	s.router.HandleFunc("/api/nodes/{id}/metrics", s.getNodeMetrics).Methods("GET")
-
-	// Service-specific endpoints
-	s.router.HandleFunc("/api/nodes/{id}/services", s.getNodeServices).Methods("GET")
-	s.router.HandleFunc("/api/nodes/{id}/services/{service}", s.getServiceDetails).Methods("GET")
-
-	// SNMP endpoints
-	s.router.HandleFunc("/api/nodes/{id}/snmp", s.getSNMPData).Methods("GET")
-
-	// Configure static file serving based on build tags
-	// This is managed via build tags in a separate file
+	// 3. Static file serving as fallback
 	s.configureStaticServing()
+	log.Println("Static file serving registered")
+}
+
+func (s *APIServer) setupWebProxyRoutes(listenAddr string) {
+	webProxyRouter := mux.NewRouter()
+	webProxyRouter.Use(srHttp.CommonMiddleware)
+	proxyHandler := func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Proxy handler hit for %s", r.URL.Path)
+		s.proxyAPIRequest(w, r, listenAddr)
+	}
+	webProxyRouter.PathPrefix("/").HandlerFunc(proxyHandler) // Match all under /web-api/
+	s.router.PathPrefix("/web-api/").Handler(webProxyRouter)
+}
+
+// proxyAPIRequest forwards an incoming request to an internal API server.
+func (s *APIServer) proxyAPIRequest(w http.ResponseWriter, r *http.Request, serverAddr string) {
+	apiPath := strings.TrimPrefix(r.URL.Path, "/web-api/")
+	internalURL := fmt.Sprintf("http://%s/%s", serverAddr, apiPath)
+	if r.URL.RawQuery != "" {
+		internalURL += "?" + r.URL.RawQuery
+	}
+	log.Printf("Proxying %s to %s", r.URL.Path, internalURL)
+	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, internalURL, r.Body)
+	if err != nil {
+		s.writeError(w, "Failed to create proxy request", http.StatusInternalServerError)
+		return
+	}
+	s.setProxyHeaders(proxyReq, r)
+	resp, err := s.executeRequest(proxyReq)
+	if err != nil {
+		s.writeError(w, "Failed to execute request", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+	s.copyResponse(w, resp)
 }
 
 // getSNMPData retrieves SNMP data for a specific node.
@@ -539,8 +513,6 @@ const (
 )
 
 func (s *APIServer) Start(addr string) error {
-	s.setupWebProxyRoutes(addr)
-
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      s.router,

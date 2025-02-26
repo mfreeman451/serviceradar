@@ -3,6 +3,7 @@ import {
     LineChart, Line, XAxis, YAxis, CartesianGrid,
     Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
+import { get } from '../services/api';
 
 const SNMPDashboard = ({ nodeId, serviceName }) => {
     const [snmpData, setSNMPData] = useState([]);

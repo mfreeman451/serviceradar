@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { LineChart, Line } from 'recharts';
 import NodeTimeline from './NodeTimeline';
 import _ from 'lodash';
 import ServiceSparkline from "./ServiceSparkline.jsx";
 import { useNavigate } from 'react-router-dom';
+import { get } from '../services/api';
+
 
 function NodeList() {
   const [nodes, setNodes] = useState([]);
@@ -93,8 +94,7 @@ function NodeList() {
   useEffect(() => {
     const fetchNodes = async () => {
       try {
-        const response = await fetch('/api/nodes');
-        const newData = await response.json();
+        const newData = await get('/api/nodes');
         const sortedData = newData.sort(sortNodesByName);
 
         setNodes((prevNodes) => {

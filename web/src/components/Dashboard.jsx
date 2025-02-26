@@ -1,5 +1,7 @@
 // src/components/Dashboard.jsx
 import React, { useState, useEffect } from 'react';
+import { get } from '../services/api';
+
 
 function Dashboard() {
     const [systemStatus, setSystemStatus] = useState(null);
@@ -7,8 +9,7 @@ function Dashboard() {
     useEffect(() => {
         const fetchStatus = async () => {
             try {
-                const response = await fetch('/api/status');
-                const data = await response.json();
+                const data = await get('/api/status');
                 setSystemStatus(data);
             } catch (error) {
                 console.error('Error fetching status:', error);

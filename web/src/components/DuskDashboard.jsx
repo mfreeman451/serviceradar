@@ -9,6 +9,8 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
+import { get } from '../services/api';
+
 
 const DuskDashboard = () => {
   const [nodeStatus, setNodeStatus] = useState(null);
@@ -19,10 +21,8 @@ const DuskDashboard = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Fetch nodes list
-        const nodesResponse = await fetch('/api/nodes');
-        if (!nodesResponse.ok) throw new Error('Failed to fetch nodes');
-        const nodes = await nodesResponse.json();
+        // Fetch nodes list using the API service
+        const nodes = await get('/api/nodes');
 
         console.log('Fetched nodes:', nodes);
 

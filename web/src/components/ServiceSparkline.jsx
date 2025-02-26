@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { LineChart, Line, YAxis, ResponsiveContainer } from 'recharts';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import _ from 'lodash';
+import { get } from '../services/api';
+
 
 const MAX_POINTS = 100;
 const POLLING_INTERVAL = 10;
@@ -58,9 +60,7 @@ const ServiceSparkline = ({ nodeId, serviceName }) => {
     useEffect(() => {
         const fetchMetrics = async () => {
             try {
-                const response = await fetch(`/api/nodes/${nodeId}/metrics`);
-                if (!response.ok) throw new Error('Failed to fetch metrics');
-                const data = await response.json();
+                const data = await get(`/api/nodes/${nodeId}/metrics`);
 
                 const serviceMetrics = data
                     .filter((m) => m.service_name === serviceName)

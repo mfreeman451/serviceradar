@@ -13,6 +13,8 @@ import {
 import NetworkSweepView from './NetworkSweepView';
 import { PingStatus } from './NetworkStatus';
 import SNMPDashboard from "./SNMPDashboard.jsx";
+import { get } from '../services/api';
+
 
 const ServiceDashboard = () => {
     const { nodeId, serviceName } = useParams();
@@ -27,9 +29,7 @@ const ServiceDashboard = () => {
         const fetchData = async () => {
             try {
                 // Fetch nodes list
-                const nodesResponse = await fetch('/api/nodes');
-                if (!nodesResponse.ok) throw new Error('Failed to fetch nodes');
-                const nodes = await nodesResponse.json();
+                const nodes = await get('/api/nodes');
 
                 // Find the specific node
                 const node = nodes.find((n) => n.node_id === nodeId);
@@ -46,13 +46,15 @@ const ServiceDashboard = () => {
                 setServiceData(service);
 
                 // Fetch metrics data
-                const metricsResponse = await fetch(`/api/nodes/${nodeId}/metrics`);
-                if (metricsResponse.ok) {
-                    const metrics = await metricsResponse.json();
+                try {
+                    const metrics = await get(`/api/nodes/${nodeId}/metrics`);
                     const serviceMetrics = metrics.filter(
                         (m) => m.service_name === serviceName
                     );
                     setMetricsData(serviceMetrics);
+                } catch (metricsError) {
+                    console.error('Error fetching metrics data:', metricsError);
+                    // Don't fail the whole request if metrics fail
                 }
 
                 setLoading(false);

@@ -3,7 +3,9 @@
 package api
 
 import (
+	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -174,14 +176,27 @@ func (*APIServer) writeError(w http.ResponseWriter, msg string, status int) {
 	log.Printf("%s: %d", msg, status)
 }
 
+// generateCSRFToken creates a random token.
+func generateCSRFToken() (string, error) {
+	b := make([]byte, 32)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
+}
+
 func (s *APIServer) setupRoutes() {
 	log.Println("Setting up routes...")
 
-	// 1. Proxy routes first, no middleware
+	// Apply CSRF middleware to all routes
+	s.router.Use(s.csrfMiddleware)
+
+	// Proxy routes
 	s.setupWebProxyRoutes("localhost:8090")
 	log.Println("Web proxy routes registered for /web-api/")
 
-	// 2. API routes with middleware on a subrouter
+	// API routes with additional middleware
 	apiRouter := s.router.PathPrefix("/api").Subrouter()
 	middlewareChain := func(next http.Handler) http.Handler {
 		return srHttp.CommonMiddleware(srHttp.APIKeyMiddleware(next))
@@ -197,7 +212,7 @@ func (s *APIServer) setupRoutes() {
 	apiRouter.HandleFunc("/nodes/{id}/snmp", s.getSNMPData).Methods("GET")
 	log.Println("API routes registered with middleware under /api/")
 
-	// 3. Static file serving as fallback
+	// Static file serving
 	s.configureStaticServing()
 	log.Println("Static file serving registered")
 }
@@ -209,8 +224,49 @@ func (s *APIServer) setupWebProxyRoutes(listenAddr string) {
 		log.Printf("Proxy handler hit for %s", r.URL.Path)
 		s.proxyAPIRequest(w, r, listenAddr)
 	}
-	webProxyRouter.PathPrefix("/").HandlerFunc(proxyHandler) // Match all under /web-api/
+	webProxyRouter.PathPrefix("/").HandlerFunc(proxyHandler)
 	s.router.PathPrefix("/web-api/").Handler(webProxyRouter)
+}
+
+// csrfMiddleware ensures CSRF token is set and validated
+func (s *APIServer) csrfMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Set CSRF token on any GET request not under /web-api/ or /api/
+		if r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/web-api/") && !strings.HasPrefix(r.URL.Path, "/api/") {
+			token, err := generateCSRFToken()
+			if err != nil {
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{
+				Name:     "csrf_token",
+				Value:    token,
+				Path:     "/",
+				HttpOnly: false,
+				SameSite: http.SameSiteLaxMode,
+			})
+			log.Printf("Set CSRF token: %s for %s", token, r.URL.Path)
+		}
+
+		// Validate CSRF token for /web-api/ requests
+		if strings.HasPrefix(r.URL.Path, "/web-api/") {
+			cookie, err := r.Cookie("csrf_token")
+			if err != nil || cookie == nil || cookie.Value == "" {
+				http.Error(w, "CSRF token missing", http.StatusForbidden)
+				log.Printf("CSRF token missing for %s", r.URL.Path)
+				return
+			}
+			headerToken := r.Header.Get("X-CSRF-Token")
+			if headerToken == "" || headerToken != cookie.Value {
+				http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+				log.Printf("Invalid CSRF token for %s", r.URL.Path)
+				return
+			}
+			log.Printf("CSRF token validated for %s", r.URL.Path)
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // proxyAPIRequest forwards an incoming request to an internal API server.

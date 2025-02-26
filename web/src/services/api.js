@@ -11,9 +11,23 @@
  */
 
 export const apiRequest = async (url, options = {}) => {
-    console.log('API request to (originalUrl): ', url);
     const headers = { ...options.headers || {} };
-    const proxyUrl = url.startsWith('/api/') ? `/web-api${url}` : url; // Makes /api/status -> /web-api/api/status
+    const proxyUrl = url.startsWith('/api/') ? `/web-api${url}` : url;
+
+    // Fetch CSRF token from cookie
+    const getCookie = (name) => {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+    };
+    const csrfToken = getCookie('csrf_token');
+    if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+        console.log(`Sending CSRF token: ${csrfToken}`);
+    } else {
+        console.warn('CSRF token not found in cookies');
+    }
+
     console.log(`API request to: ${proxyUrl}`);
     return fetch(proxyUrl, { ...options, headers });
 };

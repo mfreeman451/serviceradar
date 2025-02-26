@@ -135,18 +135,13 @@ if ! id -u serviceradar >/dev/null 2>&1; then
     useradd --system --no-create-home --shell /usr/sbin/nologin serviceradar
 fi
 
-# Generate API key and store in environment file if it doesn't exist
-ENV_FILE="/etc/serviceradar/cloud.env"
-echo "Environment file path: $ENV_FILE"
-if [ ! -f "$ENV_FILE" ]; then
-    echo "Creating environment file..."
-    mkdir -p /etc/serviceradar
-    API_KEY=$(openssl rand -hex 16)
-    echo "Generated API_KEY: $API_KEY"
-    echo "API_KEY=$API_KEY" > "$ENV_FILE"
-    echo "Environment file created"
-    chmod 600 "$ENV_FILE"
-    chown serviceradar:serviceradar "$ENV_FILE"
+# Only create env file if it doesn't exist
+if [ ! -f "/etc/serviceradar/cloud.env" ]; then
+    # Direct command execution with output to file
+    echo "API_KEY=$(openssl rand -hex 16)" > /etc/serviceradar/cloud.env
+    chmod 600 /etc/serviceradar/cloud.env
+    chown serviceradar:serviceradar /etc/serviceradar/cloud.env
+    echo "Created environment file with API key"
 fi
 
 # Set permissions for config

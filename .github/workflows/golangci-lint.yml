@@ -24,7 +24,9 @@ jobs:
       - name: Build web UI
         run: ./scripts/build-web.sh
       - name: Move web artifacts
-        run:  mkdir -p pkg/cloud/api/web/ && cp -r web/dist pkg/cloud/api/web/
+        run: mkdir -p pkg/cloud/api/web/ && cp -r web/dist pkg/cloud/api/web/
+      - name: Clean up build artifacts
+        run: git restore . && git clean -fd
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:

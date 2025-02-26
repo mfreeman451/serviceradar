@@ -5,9 +5,13 @@ package api
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,10 +113,120 @@ func (s *APIServer) setupStaticFileServing() {
 	fsys, err := fs.Sub(webContent, "web/dist")
 	if err != nil {
 		log.Printf("Error setting up static file serving: %v", err)
+
 		return
 	}
 
 	s.router.PathPrefix("/").Handler(http.FileServer(http.FS(fsys)))
+}
+
+func (s *APIServer) setupWebProxyRoutes(listenAddr string) {
+	// Create a separate router for web-to-API proxy
+	webProxyRouter := mux.NewRouter()
+
+	// Add common middleware but skip API key validation
+	webProxyRouter.Use(srHttp.CommonMiddleware)
+
+	// Create a closure to capture the listen address
+	proxyHandler := func(w http.ResponseWriter, r *http.Request) {
+		s.proxyAPIRequest(w, r, listenAddr)
+	}
+
+	// Create handlers for proxying API requests
+	webProxyRouter.PathPrefix("/web-api/").HandlerFunc(proxyHandler)
+
+	// Add the web proxy router to the main router
+	s.router.PathPrefix("/web-api/").Handler(webProxyRouter)
+}
+
+// proxyAPIRequest forwards an incoming request to an internal API server.
+func (s *APIServer) proxyAPIRequest(w http.ResponseWriter, r *http.Request, serverAddr string) {
+	// Build the internal API URL
+	apiPath := strings.TrimPrefix(r.URL.Path, "/web-api/")
+	internalURL := fmt.Sprintf("http://%s/api/%s", serverAddr, apiPath)
+
+	if r.URL.RawQuery != "" {
+		internalURL += "?" + r.URL.RawQuery
+	}
+
+	// Create a new request with context
+	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, internalURL, r.Body)
+	if err != nil {
+		s.writeError(w, "Failed to create proxy request", http.StatusInternalServerError)
+
+		return
+	}
+
+	// Set headers on the proxy request
+	s.setProxyHeaders(proxyReq, r)
+
+	// Execute the proxied request
+	resp, err := s.executeRequest(proxyReq)
+	if err != nil {
+		s.writeError(w, "Failed to execute request", http.StatusInternalServerError)
+
+		return
+	}
+
+	// Ensure the body is closed after we're done
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			log.Printf("Failed to close response body: %v", err)
+		}
+	}()
+
+	// Copy response to the client
+	if err = s.copyResponse(w, resp); err != nil {
+		s.writeError(w, "Failed to copy response body", http.StatusInternalServerError)
+
+		return
+	}
+}
+
+// setProxyHeaders adds headers to the proxied request, including API key.
+func (*APIServer) setProxyHeaders(proxyReq, originalReq *http.Request) {
+	if apiKey := os.Getenv("API_KEY"); apiKey != "" {
+		proxyReq.Header.Set("X-API-Key", apiKey)
+	}
+
+	for name, values := range originalReq.Header {
+		if !strings.EqualFold(name, "x-api-key") {
+			for _, value := range values {
+				proxyReq.Header.Add(name, value)
+			}
+		}
+	}
+}
+
+// executeRequest performs the HTTP request.
+func (*APIServer) executeRequest(req *http.Request) (*http.Response, error) {
+	client := &http.Client{}
+
+	return client.Do(req)
+}
+
+// copyResponse writes the response headers and body to the writer.
+func (*APIServer) copyResponse(w http.ResponseWriter, resp *http.Response) error {
+	for name, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(name, value)
+		}
+	}
+
+	w.WriteHeader(resp.StatusCode)
+
+	_, err := io.Copy(w, resp.Body)
+	if err != nil {
+		log.Printf("Failed to copy response body: %v", err)
+	}
+
+	return err
+}
+
+// writeError writes an HTTP error response and logs the issue.
+func (*APIServer) writeError(w http.ResponseWriter, msg string, status int) {
+	http.Error(w, msg, status)
+	log.Printf("%s: %d", msg, status)
 }
 
 func (s *APIServer) setupRoutes() {
@@ -425,6 +539,8 @@ const (
 )
 
 func (s *APIServer) Start(addr string) error {
+	s.setupWebProxyRoutes(addr)
+
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      s.router,

@@ -17,7 +17,6 @@ mkdir -p "${PKG_ROOT}/usr/local/share/serviceradar-cloud/web"
 
 echo "Building web interface..."
 
-# Build web interface if not already built
 if [ ! -d "web/dist" ]; then
     cd ./web
     npm install
@@ -25,12 +24,9 @@ if [ ! -d "web/dist" ]; then
     cd ..
 fi
 
-# Create a directory for the embedded content
 mkdir -p pkg/cloud/api/web
 cp -r web/dist pkg/cloud/api/web/
 
-# Only copy web assets to package directory for container builds
-# For non-container builds, they're embedded in the binary
 if [[ "$BUILD_TAGS" == *"containers"* ]]; then
     cp -r web/dist "${PKG_ROOT}/usr/local/share/serviceradar-cloud/web/"
     echo "Copied web assets for container build"
@@ -38,40 +34,36 @@ fi
 
 echo "Building Go binary..."
 
-# Build Go binary with or without container tags
 BUILD_CMD="CGO_ENABLED=1 GOOS=linux GOARCH=amd64"
 if [[ ! -z "$BUILD_TAGS" ]]; then
     BUILD_CMD="$BUILD_CMD GOFLAGS=\"-tags=$BUILD_TAGS\""
 fi
 BUILD_CMD="$BUILD_CMD go build -o \"../../${PKG_ROOT}/usr/local/bin/serviceradar-cloud\""
 
-# Build Go binary
 cd cmd/cloud
 eval $BUILD_CMD
 cd ../..
 
 echo "Creating package files..."
 
-# Create control file
 cat > "${PKG_ROOT}/DEBIAN/control" << EOF
 Package: serviceradar-cloud
 Version: ${VERSION}
 Section: utils
 Priority: optional
 Architecture: amd64
-Depends: systemd
+Depends: systemd, openssl
 Maintainer: Michael Freeman <mfreeman451@gmail.com>
 Description: ServiceRadar cloud service with web interface
  Provides centralized monitoring and web dashboard for ServiceRadar.
 Config: /etc/serviceradar/cloud.json
 EOF
 
-# Create conffiles to mark configuration files
 cat > "${PKG_ROOT}/DEBIAN/conffiles" << EOF
 /etc/serviceradar/cloud.json
 EOF
 
-# Create systemd service file
+# Updated systemd service file with Environment directive
 cat > "${PKG_ROOT}/lib/systemd/system/serviceradar-cloud.service" << EOF
 [Unit]
 Description=ServiceRadar Cloud Service
@@ -80,6 +72,7 @@ After=network.target
 [Service]
 Type=simple
 User=serviceradar
+EnvironmentFile=/etc/serviceradar/cloud.env
 ExecStart=/usr/local/bin/serviceradar-cloud -config /etc/serviceradar/cloud.json
 Restart=always
 RestartSec=10
@@ -91,9 +84,8 @@ KillSignal=SIGTERM
 WantedBy=multi-user.target
 EOF
 
-# Create default config only if we're creating a fresh package
+# Config file without API key
 if [ ! -f "/etc/serviceradar/cloud.json" ]; then
-    # Create default config file
     cat > "${PKG_ROOT}/etc/serviceradar/cloud.json" << EOF
 {
     "listen_addr": ":8090",
@@ -133,7 +125,7 @@ if [ ! -f "/etc/serviceradar/cloud.json" ]; then
 EOF
 fi
 
-# Create postinst script
+# Updated postinst script to generate API key in environment file
 cat > "${PKG_ROOT}/DEBIAN/postinst" << EOF
 #!/bin/bash
 set -e
@@ -143,8 +135,23 @@ if ! id -u serviceradar >/dev/null 2>&1; then
     useradd --system --no-create-home --shell /usr/sbin/nologin serviceradar
 fi
 
-# Set permissions
+# Generate API key and store in environment file if it doesn't exist
+ENV_FILE="/etc/serviceradar/cloud.env"
+echo "Environment file path: $ENV_FILE"
+if [ ! -f "$ENV_FILE" ]; then
+    echo "Creating environment file..."
+    mkdir -p /etc/serviceradar
+    API_KEY=$(openssl rand -hex 16)
+    echo "Generated API_KEY: $API_KEY"
+    echo "API_KEY=$API_KEY" > "$ENV_FILE"
+    echo "Environment file created"
+    chmod 600 "$ENV_FILE"
+    chown serviceradar:serviceradar "$ENV_FILE"
+fi
+
+# Set permissions for config
 chown -R serviceradar:serviceradar /etc/serviceradar
+chmod 644 /etc/serviceradar/cloud.json
 chmod 755 /usr/local/bin/serviceradar-cloud
 
 # Create data directory
@@ -152,7 +159,6 @@ mkdir -p /var/lib/serviceradar
 chown -R serviceradar:serviceradar /var/lib/serviceradar
 chmod 755 /var/lib/serviceradar
 
-# Set permissions for web assets
 if [ -d "/usr/local/share/serviceradar-cloud/web" ]; then
     chown -R serviceradar:serviceradar /usr/local/share/serviceradar-cloud
     chmod -R 755 /usr/local/share/serviceradar-cloud
@@ -168,12 +174,10 @@ EOF
 
 chmod 755 "${PKG_ROOT}/DEBIAN/postinst"
 
-# Create prerm script
 cat > "${PKG_ROOT}/DEBIAN/prerm" << EOF
 #!/bin/bash
 set -e
 
-# Stop and disable service
 systemctl stop serviceradar-cloud || true
 systemctl disable serviceradar-cloud || true
 
@@ -184,17 +188,11 @@ chmod 755 "${PKG_ROOT}/DEBIAN/prerm"
 
 echo "Building Debian package..."
 
-# Create release-artifacts directory if it doesn't exist
 mkdir -p ./release-artifacts
-
-# Build the package
 dpkg-deb --build "${PKG_ROOT}"
-
-# Move the deb file to the release-artifacts directory
 mv "${PKG_ROOT}.deb" "./release-artifacts/"
 
 if [[ ! -z "$BUILD_TAGS" ]]; then
-    # For tagged builds, add the tag to the filename
     PACKAGE_NAME="serviceradar-cloud_${VERSION}-${BUILD_TAGS//,/_}.deb"
     mv "./release-artifacts/${PKG_ROOT}.deb" "./release-artifacts/$PACKAGE_NAME"
     echo "Package built: release-artifacts/$PACKAGE_NAME"

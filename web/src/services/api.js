@@ -27,8 +27,10 @@ export const apiRequest = async (url, options = {}) => {
         headers['X-API-Key'] = apiKey;
     }
 
+    const proxyUrl = url.replace(/^\/api\//, '/web-api/');
+
     // Make the request with the headers
-    return fetch(url, {
+    return fetch(proxyUrl, {
         ...options,
         headers,
     });

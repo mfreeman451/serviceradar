@@ -18,7 +18,9 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +35,7 @@ import (
 	"github.com/carverauto/serviceradar/pkg/db"
 	"github.com/carverauto/serviceradar/pkg/metrics"
 	"github.com/carverauto/serviceradar/pkg/models"
+	"github.com/carverauto/serviceradar/pkg/notifications"
 	"github.com/carverauto/serviceradar/proto"
 )
 
@@ -86,7 +89,6 @@ func NewServer(_ context.Context, config *Config) (*Server, error) {
 	server := &Server{
 		db:             database,
 		alertThreshold: config.AlertThreshold,
-		webhooks:       make([]alerts.AlertService, 0),
 		ShutdownChan:   make(chan struct{}),
 		pollerPatterns: config.PollerPatterns,
 		metrics:        metricsManager,
@@ -94,23 +96,7 @@ func NewServer(_ context.Context, config *Config) (*Server, error) {
 		config:         config,
 	}
 
-	// Initialize webhooks
-	server.initializeWebhooks(config.Webhooks)
-
 	return server, nil
-}
-
-func (s *Server) initializeWebhooks(configs []alerts.WebhookConfig) {
-	for i, config := range configs {
-		log.Printf("Processing webhook config %d: enabled=%v", i, config.Enabled)
-
-		if config.Enabled {
-			alerter := alerts.NewWebhookAlerter(config)
-			s.webhooks = append(s.webhooks, alerter)
-
-			log.Printf("Added webhook alerter: %+v", config.URL)
-		}
-	}
 }
 
 // Start implements the lifecycle.Service interface.
@@ -203,6 +189,12 @@ func (s *Server) Stop(ctx context.Context) error {
 		log.Printf("Failed to send shutdown notification: %v", err)
 	}
 
+	// Stop notification cleanup if running
+	if s.notificationCleanup != nil {
+		s.notificationCleanup.Stop()
+		log.Println("Notification cleanup service stopped")
+	}
+
 	// Stop GRPC server if it exists
 	if s.grpcServer != nil {
 		s.grpcServer.Stop(ctx)
@@ -228,6 +220,86 @@ func (s *Server) isKnownPoller(pollerID string) bool {
 	}
 
 	return false
+}
+
+// initializeNotifications initializes the notification system
+func (s *Server) initializeNotifications(config *Config) error {
+	// Initialize notification service directly from database connection
+	s.notificationService = notifications.NewService(s.db)
+
+	// Set up handlers based on config
+	// Set up webhook handler if configured
+	if len(config.Webhooks) > 0 {
+		webhookConfigs := make(map[string]notifications.WebhookHandlerConfig)
+
+		for _, cfg := range config.Webhooks {
+			if !cfg.Enabled {
+				continue
+			}
+
+			// Generate a target ID from the URL (or use one from config if preferred)
+			targetID := generateTargetID(cfg.URL)
+
+			// Convert the headers array to a map
+			headers := make(map[string]string)
+			for _, header := range cfg.Headers {
+				headers[header.Key] = header.Value
+			}
+
+			webhookConfigs[targetID] = notifications.WebhookHandlerConfig{
+				URL:        cfg.URL,
+				Method:     "POST", // Default
+				Headers:    headers,
+				Template:   cfg.Template,
+				Secret:     cfg.Secret,
+				Timeout:    10 * time.Second, // Default
+				MaxRetries: 3,                // Default
+				RetryDelay: 5 * time.Second,  // Default
+			}
+		}
+
+		if len(webhookConfigs) > 0 {
+			handler := notifications.NewWebhookHandler(webhookConfigs)
+			if serviceImpl, ok := s.notificationService.(*notifications.Service); ok {
+				serviceImpl.RegisterHandler(notifications.TargetTypeWebhook, handler)
+			}
+			log.Printf("Initialized webhook handler with %d configurations", len(webhookConfigs))
+		}
+	}
+
+	// Set up cleanup service
+	cleanupConfig := notifications.CleanupConfig{
+		Interval:              1 * time.Hour,       // Default
+		ResolvedRetention:     30 * 24 * time.Hour, // 30 days
+		AcknowledgedRetention: 7 * 24 * time.Hour,  // 7 days
+		PendingRetention:      3 * 24 * time.Hour,  // 3 days
+		DeleteExpired:         true,
+	}
+
+	s.notificationCleanup = notifications.NewCleanupService(s.notificationService, cleanupConfig)
+	s.notificationCleanup.Start()
+
+	log.Printf("Notification system initialized")
+	return nil
+}
+
+// generateTargetID generates a unique target ID from a webhook URL.
+func generateTargetID(url string) string {
+	// Simple hash function for URL
+	hash := sha256.Sum256([]byte(url))
+
+	return fmt.Sprintf("webhook-%s", hex.EncodeToString(hash[:8]))
+}
+
+func defaultTargets() []notifications.TargetRequest {
+	// Default targets should be based on your configuration
+	// This is just a placeholder example
+	return []notifications.TargetRequest{
+		{
+			TargetType: notifications.TargetTypeWebhook,
+			TargetID:   "default-webhook",
+		},
+	}
 }
 
 func (s *Server) cleanupUnknownPollers(ctx context.Context) error {
@@ -266,42 +338,58 @@ func (s *Server) cleanupUnknownPollers(ctx context.Context) error {
 }
 
 func (s *Server) sendStartupNotification(ctx context.Context) error {
-	if len(s.webhooks) == 0 {
+	if s.notificationService == nil {
 		return nil
 	}
 
-	alert := &alerts.WebhookAlert{
-		Level:     alerts.Info,
-		Title:     "Core Service Started",
-		Message:   fmt.Sprintf("ServiceRadar core service initialized at %s", time.Now().Format(time.RFC3339)),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		NodeID:    "core",
-		Details: map[string]any{
+	// Create notification for startup
+	req := notifications.NotificationRequest{
+		AlertID: fmt.Sprintf("core-startup-%d", time.Now().Unix()),
+		NodeID:  "core",
+		Level:   notifications.LevelInfo,
+		Title:   "Core Service Started",
+		Message: fmt.Sprintf("ServiceRadar core service initialized at %s", time.Now().Format(time.RFC3339)),
+		Metadata: map[string]interface{}{
 			"version":  "1.0.21",
 			"hostname": getHostname(),
 		},
+		Targets: defaultTargets(),
 	}
 
-	return s.sendAlert(ctx, alert)
+	// Create startup notification
+	_, err := s.notificationService.CreateNotification(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to create startup notification: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Server) sendShutdownNotification(ctx context.Context) error {
-	if len(s.webhooks) == 0 {
+	if s.notificationService == nil {
 		return nil
 	}
 
-	alert := &alerts.WebhookAlert{
-		Level:     alerts.Warning,
-		Title:     "Core Service Stopping",
-		Message:   fmt.Sprintf("ServiceRadar core service shutting down at %s", time.Now().Format(time.RFC3339)),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		NodeID:    "core",
-		Details: map[string]any{
+	// Create notification for shutdown
+	req := notifications.NotificationRequest{
+		AlertID: fmt.Sprintf("core-shutdown-%d", time.Now().Unix()),
+		NodeID:  "core",
+		Level:   notifications.LevelWarning,
+		Title:   "Core Service Stopping",
+		Message: fmt.Sprintf("ServiceRadar core service shutting down at %s", time.Now().Format(time.RFC3339)),
+		Metadata: map[string]interface{}{
 			"hostname": getHostname(),
 		},
+		Targets: defaultTargets(),
 	}
 
-	return s.sendAlert(ctx, alert)
+	// Create shutdown notification
+	_, err := s.notificationService.CreateNotification(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to create shutdown notification: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Server) Shutdown(ctx context.Context) {
@@ -1014,25 +1102,33 @@ func (s *Server) handlePotentialRecovery(ctx context.Context, nodeID string, las
 }
 
 func (s *Server) handleNodeDown(ctx context.Context, nodeID string, lastSeen time.Time) error {
+	if s.notificationService == nil {
+		return nil
+	}
+
+	// Update node status in database
 	if err := s.updateNodeStatus(nodeID, false, lastSeen); err != nil {
 		return fmt.Errorf("failed to update node status: %w", err)
 	}
 
-	// Send alert
-	alert := &alerts.WebhookAlert{
-		Level:     alerts.Error,
-		Title:     "Node Offline",
-		Message:   fmt.Sprintf("Node '%s' is offline", nodeID),
-		NodeID:    nodeID,
-		Timestamp: lastSeen.UTC().Format(time.RFC3339),
-		Details: map[string]any{
+	// Create notification for node down
+	req := notifications.NotificationRequest{
+		AlertID: fmt.Sprintf("node-down-%s-%d", nodeID, time.Now().Unix()),
+		NodeID:  nodeID,
+		Level:   notifications.LevelError,
+		Title:   "Node Offline",
+		Message: fmt.Sprintf("Node '%s' is offline", nodeID),
+		Metadata: map[string]interface{}{
 			"hostname": getHostname(),
 			"duration": time.Since(lastSeen).String(),
 		},
+		Targets: defaultTargets(),
 	}
 
-	if err := s.sendAlert(ctx, alert); err != nil {
-		log.Printf("Failed to send down alert: %v", err)
+	// Create node down notification
+	_, err := s.notificationService.CreateNotification(ctx, req)
+	if err != nil {
+		log.Printf("Failed to create node down notification: %v", err)
 	}
 
 	// Update API state
@@ -1046,6 +1142,7 @@ func (s *Server) handleNodeDown(ctx context.Context, nodeID string, lastSeen tim
 
 	return nil
 }
+
 func (s *Server) updateNodeStatus(nodeID string, isHealthy bool, timestamp time.Time) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -1107,30 +1204,29 @@ func (*Server) updateNodeInTx(tx *sql.Tx, nodeID string, isHealthy bool, timesta
 }
 
 func (s *Server) handleNodeRecovery(ctx context.Context, nodeID string, apiStatus *api.NodeStatus, timestamp time.Time) {
-	// Reset the "down" state in the alerter *before* sending the alert.
-	for _, webhook := range s.webhooks {
-		if alerter, ok := webhook.(*alerts.WebhookAlerter); ok {
-			alerter.MarkNodeAsRecovered(nodeID)
-			alerter.MarkServiceAsRecovered(nodeID)
-		}
+	if s.notificationService == nil {
+		return
 	}
 
-	alert := &alerts.WebhookAlert{
-		Level:       alerts.Info,
-		Title:       "Node Recovered",
-		Message:     fmt.Sprintf("Node '%s' is back online", nodeID),
-		NodeID:      nodeID,
-		Timestamp:   timestamp.UTC().Format(time.RFC3339),
-		ServiceName: "", // Ensure ServiceName is empty for node-level alerts
-		Details: map[string]any{
+	// Create notification for node recovery
+	req := notifications.NotificationRequest{
+		AlertID: fmt.Sprintf("node-recovered-%s-%d", nodeID, time.Now().Unix()),
+		NodeID:  nodeID,
+		Level:   notifications.LevelInfo,
+		Title:   "Node Recovered",
+		Message: fmt.Sprintf("Node '%s' is back online", nodeID),
+		Metadata: map[string]interface{}{
 			"hostname":      getHostname(),
 			"recovery_time": timestamp.Format(time.RFC3339),
-			"services":      len(apiStatus.Services), //  This might be 0, which is fine.
+			"services":      len(apiStatus.Services),
 		},
+		Targets: defaultTargets(),
 	}
 
-	if err := s.sendAlert(ctx, alert); err != nil {
-		log.Printf("Failed to send recovery alert: %v", err)
+	// Create node recovery notification
+	_, err := s.notificationService.CreateNotification(ctx, req)
+	if err != nil {
+		log.Printf("Failed to create node recovery notification: %v", err)
 	}
 }
 

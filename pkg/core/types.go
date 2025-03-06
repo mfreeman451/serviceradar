@@ -27,6 +27,7 @@ import (
 	"github.com/carverauto/serviceradar/pkg/grpc"
 	"github.com/carverauto/serviceradar/pkg/metrics"
 	"github.com/carverauto/serviceradar/pkg/models"
+	"github.com/carverauto/serviceradar/pkg/notifications"
 	"github.com/carverauto/serviceradar/proto"
 )
 
@@ -51,17 +52,18 @@ type Config struct {
 
 type Server struct {
 	proto.UnimplementedPollerServiceServer
-	mu             sync.RWMutex
-	db             db.Service
-	alertThreshold time.Duration
-	webhooks       []alerts.AlertService
-	apiServer      api.Service
-	ShutdownChan   chan struct{}
-	pollerPatterns []string
-	grpcServer     *grpc.Server
-	metrics        metrics.MetricCollector
-	snmpManager    snmp.SNMPManager
-	config         *Config
+	mu                  sync.RWMutex
+	db                  db.Service
+	alertThreshold      time.Duration
+	notificationService notifications.NotificationService
+	notificationCleanup *notifications.CleanupService
+	apiServer           api.Service
+	ShutdownChan        chan struct{}
+	pollerPatterns      []string
+	grpcServer          *grpc.Server
+	metrics             metrics.MetricCollector
+	snmpManager         snmp.SNMPManager
+	config              *Config
 }
 
 // OIDStatusData represents the structure of OID status data.

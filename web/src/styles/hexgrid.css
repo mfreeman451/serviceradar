@@ -1,0 +1,61 @@
+/* src/styles/hexgrid.css */
+
+/* Main grid container */
+.honeycomb-grid {
+    font-family: sans-serif;
+    overflow: visible !important;
+}
+
+/* Hexagons */
+.honeycomb-hex {
+    transition: all 0.2s ease;
+    cursor: pointer;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
+}
+
+.honeycomb-hex:hover {
+    transform: scale(1.05);
+    filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1));
+}
+
+/* Hexagon text */
+.honeycomb-text {
+    font-size: 0.65em;
+    font-weight: bold;
+    fill: white;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    pointer-events: none;
+}
+
+/* SVG polygon styling */
+.honeycomb-hex polygon {
+    stroke-width: 0.4;
+    transition: fill 0.2s ease;
+}
+
+/* Dark mode adjustments */
+.dark .honeycomb-text {
+    fill: white;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* Media queries for responsive sizing */
+@media (max-width: 768px) {
+    .honeycomb-grid {
+        height: 250px !important;
+    }
+
+    .honeycomb-text {
+        font-size: 0.55em;
+    }
+}
+
+@media (max-width: 480px) {
+    .honeycomb-grid {
+        height: 200px !important;
+    }
+
+    .honeycomb-text {
+        font-size: 0.5em;
+    }
+}

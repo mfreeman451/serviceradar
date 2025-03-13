@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import ExportButton from './ExportButton';
 import { Filter, Search, ChevronDown, ChevronUp, Info, X } from 'lucide-react';
+import HoneycombNetworkGrid from './HoneycombNetworkGrid';
 
 const compareIPAddresses = (ip1, ip2) => {
     // Split IPs into their octets and convert to numbers
@@ -143,7 +144,7 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
     const [showFilters, setShowFilters] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
     const [networkSearchTerm, setNetworkSearchTerm] = useState('');
-    const [showNetworkInfo, setShowNetworkInfo] = useState(false);
+    const [showNetworkGrid, setShowNetworkGrid] = useState(false);
     const hostsPerPage = 10;
 
     // Parse sweep details from service
@@ -160,13 +161,55 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
     // Network count for UI display
     const networkCount = networks.length;
 
-    // Filtered networks based on search
-    const filteredNetworks = useMemo(() => {
-        if (networkSearchTerm === '') return networks.slice(0, 5); // Just show first 5 by default
-        return networks.filter(network =>
-            network.toLowerCase().includes(networkSearchTerm.toLowerCase())
-        ).slice(0, 10); // Show max of 10 matches
-    }, [networks, networkSearchTerm]);
+    // Generate network status data
+    // In a real implementation, this would come from your API
+    const getNetworkStatusData = useCallback(() => {
+        const statusData = {};
+
+        networks.forEach(network => {
+            // Generate status based on hosts in this network
+            const hostsInNetwork = sweepDetails.hosts?.filter(host => {
+                // Check if host belongs to this network
+                // We assume the network is in CIDR notation like "192.168.1.0/24"
+                const networkPrefix = network.split('/')[0].split('.').slice(0, 3).join('.');
+                return host.host.startsWith(networkPrefix);
+            }) || [];
+
+            // Calculate number of available hosts
+            const availableHosts = hostsInNetwork.filter(host => host.available).length;
+            const totalHosts = hostsInNetwork.length;
+
+            // Calculate average response time
+            const respondingHosts = hostsInNetwork.filter(h =>
+                h.icmp_status?.available && h.icmp_status?.round_trip > 0
+            );
+
+            let avgResponseTime = null;
+            if (respondingHosts.length > 0) {
+                const totalTime = respondingHosts.reduce((acc, h) => acc + h.icmp_status.round_trip, 0);
+                avgResponseTime = `${((totalTime / respondingHosts.length) / 1000000).toFixed(1)}ms`;
+            }
+
+            // Determine status
+            let status = 'unknown';
+            if (totalHosts > 0) {
+                const availability = availableHosts / totalHosts;
+                if (availability > 0.9) status = 'online';
+                else if (availability > 0.5) status = 'warning';
+                else if (availability === 0) status = 'offline';
+                else status = 'warning';
+            }
+
+            statusData[network] = {
+                status,
+                responseTime: avgResponseTime,
+                availableHosts,
+                totalHosts
+            };
+        });
+
+        return statusData;
+    }, [networks, sweepDetails]);
 
     // Sort and filter hosts
     const sortAndFilterHosts = (hosts) => {
@@ -247,8 +290,9 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
                                 {networkCount} {networkCount === 1 ? 'network' : 'networks'} scanned
                             </span>
                             <button
-                                onClick={() => setShowNetworkInfo(!showNetworkInfo)}
+                                onClick={() => setShowNetworkGrid(!showNetworkGrid)}
                                 className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                                aria-label={showNetworkGrid ? "Hide network grid" : "Show network grid"}
                             >
                                 <Info size={16} />
                             </button>
@@ -284,61 +328,29 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
                     </div>
                 </div>
 
-                {/* Network Information Panel (Collapsible) */}
-                {showNetworkInfo && (
-                    <div className="bg-blue-50 dark:bg-blue-900/30 p-4 rounded-lg mb-4 relative">
-                        <button
-                            onClick={() => setShowNetworkInfo(false)}
-                            className="absolute top-2 right-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                        >
-                            <X size={16} />
-                        </button>
-
-                        <h4 className="text-md font-medium text-gray-800 dark:text-gray-200 mb-2">
-                            Networks Being Monitored
-                        </h4>
-
-                        {/* Network Search */}
-                        <div className="relative mb-3">
-                            <input
-                                type="text"
-                                placeholder="Search networks..."
-                                className="w-full px-3 py-2 border rounded text-gray-700 dark:text-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-600 pl-8"
-                                value={networkSearchTerm}
-                                onChange={(e) => setNetworkSearchTerm(e.target.value)}
-                            />
-                            <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
+                {/* Network Honeycomb Grid (Collapsible) */}
+                {showNetworkGrid && (
+                    <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg mb-4 relative border dark:border-gray-700">
+                        <div className="flex justify-between items-center mb-3">
+                            <h4 className="text-md font-medium text-gray-800 dark:text-gray-200">
+                                Networks Being Monitored
+                            </h4>
+                            <button
+                                onClick={() => setShowNetworkGrid(false)}
+                                className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                                aria-label="Close network grid"
+                            >
+                                <X size={16} />
+                            </button>
                         </div>
 
-                        {/* Network List */}
-                        <div className="max-h-40 overflow-y-auto bg-white dark:bg-gray-800 rounded p-2 mb-2">
-                            {filteredNetworks.length > 0 ? (
-                                <ul className="list-disc list-inside">
-                                    {filteredNetworks.map((network, index) => (
-                                        <li key={index} className="text-sm text-gray-700 dark:text-gray-300 py-1">
-                                            {network}
-                                        </li>
-                                    ))}
-                                </ul>
-                            ) : (
-                                <p className="text-sm text-gray-500 dark:text-gray-400 italic">
-                                    No matching networks found
-                                </p>
-                            )}
-                        </div>
-
-                        {/* Show count of total vs displayed */}
-                        {networkSearchTerm === '' && networkCount > 5 && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400">
-                                Showing 5 of {networkCount} networks. Use the search to find specific networks.
-                            </p>
-                        )}
-
-                        {networkSearchTerm !== '' && filteredNetworks.length < networkCount && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400">
-                                Showing {filteredNetworks.length} of {networkCount} networks matching "{networkSearchTerm}".
-                            </p>
-                        )}
+                        {/* Honeycomb Network Grid */}
+                        <HoneycombNetworkGrid
+                            networks={networks}
+                            searchTerm={networkSearchTerm}
+                            onSearchChange={setNetworkSearchTerm}
+                            statusData={getNetworkStatusData()}
+                        />
                     </div>
                 )}
 

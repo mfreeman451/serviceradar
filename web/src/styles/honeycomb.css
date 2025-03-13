@@ -1,0 +1,38 @@
+/* HexgridStyles.css */
+
+/* Container for the grid */
+.honeycomb-grid-container {
+    width: 100%;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Hexagon hover effect */
+.hex-cell:hover {
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3)) !important;
+    transform: scale(1.1);
+    cursor: pointer;
+}
+
+/* Text styling - override for dark mode */
+.dark .hex-cell text {
+    fill: white;
+}
+
+/* SVG specific styling */
+svg.react-hexgrid {
+    overflow: visible;
+}
+
+/* For better hexagon resizing */
+@media (max-width: 768px) {
+    svg.react-hexgrid {
+        max-height: 300px;
+    }
+}
+
+@media (max-width: 480px) {
+    svg.react-hexgrid {
+        max-height: 250px;
+    }
+}

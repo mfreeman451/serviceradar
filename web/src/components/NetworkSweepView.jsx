@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import ExportButton from './ExportButton';
+import HoneycombNetworkGrid from './HoneycombNetworkGrid';
 import { Filter, Search, ChevronDown, ChevronUp, Info, X } from 'lucide-react';
 
 const compareIPAddresses = (ip1, ip2) => {
@@ -48,7 +49,7 @@ const HostDetailsView = ({ host }) => {
 
     return (
         <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow transition-colors">
-            <div className="flex justify-between items-center">
+            <div className="flex items-center justify-between">
                 <h4 className="text-base sm:text-lg font-semibold text-gray-800 dark:text-gray-200">
                     {host.host}
                 </h4>
@@ -142,7 +143,6 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [showFilters, setShowFilters] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
-    const [networkSearchTerm, setNetworkSearchTerm] = useState('');
     const [showNetworkInfo, setShowNetworkInfo] = useState(false);
     const hostsPerPage = 10;
 
@@ -160,26 +160,18 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
     // Network count for UI display
     const networkCount = networks.length;
 
-    // Filtered networks based on search
-    const filteredNetworks = useMemo(() => {
-        if (networkSearchTerm === '') return networks.slice(0, 5); // Just show first 5 by default
-        return networks.filter(network =>
-            network.toLowerCase().includes(networkSearchTerm.toLowerCase())
-        ).slice(0, 10); // Show max of 10 matches
-    }, [networks, networkSearchTerm]);
-
     // Sort and filter hosts
-    const sortAndFilterHosts = (hosts) => {
+    const sortAndFilterHosts = useCallback((hosts) => {
         if (!hosts) return [];
         return [...hosts]
             .filter((host) =>
                 host.host.toLowerCase().includes(searchTerm.toLowerCase())
             )
             .sort((a, b) => compareIPAddresses(a.host, b.host));
-    };
+    }, [searchTerm]);
 
     // Get hosts that are responding
-    const getRespondingHosts = (hosts) => {
+    const getRespondingHosts = useCallback((hosts) => {
         if (!hosts) return [];
 
         return hosts.filter((host) => {
@@ -196,16 +188,20 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
 
             return hasOpenPorts || hasICMPResponse;
         });
-    };
+    }, []);
 
-    const respondingHosts = getRespondingHosts(sweepDetails.hosts);
+    const respondingHosts = useMemo(() =>
+            getRespondingHosts(sweepDetails.hosts),
+        [sweepDetails.hosts, getRespondingHosts]
+    );
 
     // Filter and sort hosts for display
-    const filteredHosts = sweepDetails.hosts
-        ? sortAndFilterHosts(respondingHosts).filter((host) =>
+    const filteredHosts = useMemo(() => {
+        if (!sweepDetails.hosts) return [];
+        return sortAndFilterHosts(respondingHosts).filter((host) =>
             host.host.toLowerCase().includes(searchTerm.toLowerCase())
-        )
-        : [];
+        );
+    }, [respondingHosts, searchTerm, sortAndFilterHosts]);
 
     // Paginate filtered hosts for display
     const paginatedHosts = useMemo(() => {
@@ -284,61 +280,13 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
                     </div>
                 </div>
 
-                {/* Network Information Panel (Collapsible) */}
+                {/* Network Information Panel (using Honeycomb Grid) */}
                 {showNetworkInfo && (
-                    <div className="bg-blue-50 dark:bg-blue-900/30 p-4 rounded-lg mb-4 relative">
-                        <button
-                            onClick={() => setShowNetworkInfo(false)}
-                            className="absolute top-2 right-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                        >
-                            <X size={16} />
-                        </button>
-
-                        <h4 className="text-md font-medium text-gray-800 dark:text-gray-200 mb-2">
-                            Networks Being Monitored
-                        </h4>
-
-                        {/* Network Search */}
-                        <div className="relative mb-3">
-                            <input
-                                type="text"
-                                placeholder="Search networks..."
-                                className="w-full px-3 py-2 border rounded text-gray-700 dark:text-gray-200 dark:bg-gray-800 border-gray-300 dark:border-gray-600 pl-8"
-                                value={networkSearchTerm}
-                                onChange={(e) => setNetworkSearchTerm(e.target.value)}
-                            />
-                            <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
-                        </div>
-
-                        {/* Network List */}
-                        <div className="max-h-40 overflow-y-auto bg-white dark:bg-gray-800 rounded p-2 mb-2">
-                            {filteredNetworks.length > 0 ? (
-                                <ul className="list-disc list-inside">
-                                    {filteredNetworks.map((network, index) => (
-                                        <li key={index} className="text-sm text-gray-700 dark:text-gray-300 py-1">
-                                            {network}
-                                        </li>
-                                    ))}
-                                </ul>
-                            ) : (
-                                <p className="text-sm text-gray-500 dark:text-gray-400 italic">
-                                    No matching networks found
-                                </p>
-                            )}
-                        </div>
-
-                        {/* Show count of total vs displayed */}
-                        {networkSearchTerm === '' && networkCount > 5 && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400">
-                                Showing 5 of {networkCount} networks. Use the search to find specific networks.
-                            </p>
-                        )}
-
-                        {networkSearchTerm !== '' && filteredNetworks.length < networkCount && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400">
-                                Showing {filteredNetworks.length} of {networkCount} networks matching "{networkSearchTerm}".
-                            </p>
-                        )}
+                    <div className="bg-gray-50 dark:bg-gray-800 rounded-lg shadow p-4 mb-4 relative h-96">
+                        <HoneycombNetworkGrid
+                            networks={networks}
+                            onClose={() => setShowNetworkInfo(false)}
+                        />
                     </div>
                 )}
 
@@ -499,7 +447,11 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
                         <div className="flex justify-center mt-4">
                             <div className="flex items-center space-x-2">
                                 <button
-                                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                                    onClick={() => {
+                                        if (currentPage > 1) {
+                                            setCurrentPage(currentPage - 1);
+                                        }
+                                    }}
                                     disabled={currentPage === 1}
                                     className={`px-3 py-1 rounded ${
                                         currentPage === 1
@@ -515,7 +467,11 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
                                 </div>
 
                                 <button
-                                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                                    onClick={() => {
+                                        if (currentPage < totalPages) {
+                                            setCurrentPage(currentPage + 1);
+                                        }
+                                    }}
                                     disabled={currentPage === totalPages}
                                     className={`px-3 py-1 rounded ${
                                         currentPage === totalPages

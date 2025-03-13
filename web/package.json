@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "honeycomb-grid": "^4.1.5",
     "lodash": "^4.17.21",
     "lucide-react": "^0.476.0",
     "next": "15.1.7",

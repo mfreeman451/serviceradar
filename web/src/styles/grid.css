@@ -1,0 +1,5 @@
+.honeycomb-grid-container {
+    min-height: 500px;
+    height: 100%;
+    overflow: auto;
+}

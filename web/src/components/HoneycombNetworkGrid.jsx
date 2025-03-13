@@ -162,6 +162,17 @@ const HoneycombNetworkGrid = ({ networks = [], onClose }) => {
         // Store hexagon data for hover detection
         const hexagons = [];
 
+        // Debug: output current network data
+        console.log("Current networks to display:", currentNetworks.map(network => {
+            const status = getNetworkStatus(network);
+            return {
+                network,
+                responds: status.responds,
+                pingTime: status.pingTime,
+                displayText: getDisplayText(network)
+            };
+        }));
+
         // Draw hexagons
         let index = 0;
         for (let row = 0; row < height; row++) {
@@ -288,10 +299,7 @@ const HoneycombNetworkGrid = ({ networks = [], onClose }) => {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
 
-        // Display shortened network ID
-        const displayText = getDisplayText(network);
-
-        // On hover, show the full network address
+        // On hover, show the full network address with larger font
         if (isHovered) {
             ctx.font = 'bold 14px sans-serif';
             ctx.fillText(network, x, y - 8);
@@ -305,19 +313,73 @@ const HoneycombNetworkGrid = ({ networks = [], onClose }) => {
                 ctx.fillText('No Response', x, y + 12);
             }
         } else {
-            // Regular view (not hovered)
+            // Regular view (not hovered) - always show network
+            const simplifiedIP = simplifyIP(network);
+
             ctx.font = 'bold 12px sans-serif';
-            ctx.fillText(displayText, x, y - 5);
+            ctx.fillText(simplifiedIP, x, y - 8);
 
             if (networkStatus.responds) {
                 ctx.font = '12px sans-serif';
-                ctx.fillText(`${networkStatus.pingTime.toFixed(1)}ms`, x, y + 12);
+                ctx.fillText(`${networkStatus.pingTime.toFixed(1)}ms`, x, y + 10);
             } else {
                 ctx.font = '11px sans-serif';
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-                ctx.fillText('No Response', x, y + 12);
+                ctx.fillText('No Response', x, y + 10);
             }
         }
+    };
+
+    // Helper to simplify IP address display
+    const simplifyIP = (ip) => {
+        // Handle CIDR notation
+        if (ip.includes('/')) {
+            const parts = ip.split('/');
+            const ipParts = parts[0].split('.');
+
+            // For 10.x.x.x networks, show last part with CIDR
+            if (ipParts[0] === '10') {
+                return `${ipParts[3]}/${parts[1]}`;
+            }
+
+            // For 172.16-31.x.x networks, show two parts with CIDR
+            if (ipParts[0] === '172' && parseInt(ipParts[1]) >= 16 && parseInt(ipParts[1]) <= 31) {
+                return `${ipParts[2]}.${ipParts[3]}/${parts[1]}`;
+            }
+
+            // For 192.168.x.x networks, show one part with CIDR
+            if (ipParts[0] === '192' && ipParts[1] === '168') {
+                return `${ipParts[2]}.${ipParts[3]}/${parts[1]}`;
+            }
+
+            // For other networks, show base address for brevity
+            return `${ipParts[0]}.${ipParts[1]}/${parts[1]}`;
+        }
+
+        // Handle plain IP addresses (no CIDR)
+        const ipParts = ip.split('.');
+        if (ipParts.length === 4) {
+            // For 10.x.x.x networks, show last 2 parts
+            if (ipParts[0] === '10') {
+                return `10.${ipParts[1]}.${ipParts[2]}`;
+            }
+
+            // For 172.16-31.x.x networks, show two parts
+            if (ipParts[0] === '172' && parseInt(ipParts[1]) >= 16 && parseInt(ipParts[1]) <= 31) {
+                return `172.${ipParts[1]}.${ipParts[2]}`;
+            }
+
+            // For 192.168.x.x networks, show last 2 parts
+            if (ipParts[0] === '192' && ipParts[1] === '168') {
+                return `${ipParts[2]}.${ipParts[3]}`;
+            }
+
+            // For other networks, show first 2 parts
+            return `${ipParts[0]}.${ipParts[1]}`;
+        }
+
+        // For non-IP addresses
+        return ip;
     };
 
     // Helper to get display text for network

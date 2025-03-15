@@ -285,6 +285,7 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
                     <div className="bg-gray-50 dark:bg-gray-800 rounded-lg shadow p-4 mb-4 relative h-96">
                         <HoneycombNetworkGrid
                             networks={networks}
+                            sweepDetails={sweepDetails}
                             onClose={() => setShowNetworkInfo(false)}
                         />
                     </div>

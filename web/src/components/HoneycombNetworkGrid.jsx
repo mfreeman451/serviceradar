@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 
-const HoneycombNetworkGrid = ({ networks = [], onClose }) => {
+const HoneycombNetworkGrid = ({ networks = [], onClose, sweepDetails }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [currentPage, setCurrentPage] = useState(0);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -92,29 +92,42 @@ const HoneycombNetworkGrid = ({ networks = [], onClose }) => {
         return hexSize * hexSize >= dx * dx + dy * dy * 3;
     };
 
-    // Get ping data for a network
+    // Get real network status for a network
     const getNetworkStatus = (network) => {
-        // Use a consistent hash from the network string for demo
-        let hash = 0;
-        for (let i = 0; i < network.length; i++) {
-            hash = ((hash << 5) - hash) + network.charCodeAt(i);
-            hash |= 0; // Convert to 32bit integer
+        if (!sweepDetails || !sweepDetails.hosts) {
+            return { responds: false, pingTime: null };
         }
 
-        // Some networks don't respond to ping (about 10% in this demo)
-        const responds = (Math.abs(hash) % 10) !== 0;
+        // Extract network prefix (e.g., "10.0.0" from "10.0.0.0/24")
+        const networkPrefix = network.split('/')[0];
+        const networkParts = networkPrefix.split('.').slice(0, 3).join('.');
 
-        if (!responds) {
-            return {
-                responds: false,
-                pingTime: null
-            };
+        // Find hosts that belong to this network
+        const hostsInNetwork = sweepDetails.hosts.filter(host =>
+            host.host && host.host.startsWith(networkParts)
+        );
+
+        // Check if any hosts in this network are responding to ICMP
+        const respondingHosts = hostsInNetwork.filter(host =>
+            host.icmp_status && host.icmp_status.available
+        );
+
+        if (respondingHosts.length === 0) {
+            return { responds: false, pingTime: null };
         }
 
-        // Generate a ping time between 25-125ms based on hash
+        // Calculate average ping time for responding hosts
+        const totalPingTime = respondingHosts.reduce((sum, host) => {
+            return sum + (host.icmp_status.round_trip || 0);
+        }, 0);
+
+        const avgPingTime = totalPingTime / respondingHosts.length / 1000000; // Convert to ms
+
         return {
             responds: true,
-            pingTime: Math.abs(hash % 100) + 25
+            pingTime: avgPingTime,
+            respondingCount: respondingHosts.length,
+            totalCount: hostsInNetwork.length
         };
     };
 
@@ -162,17 +175,6 @@ const HoneycombNetworkGrid = ({ networks = [], onClose }) => {
         // Store hexagon data for hover detection
         const hexagons = [];
 
-        // Debug: output current network data
-        console.log("Current networks to display:", currentNetworks.map(network => {
-            const status = getNetworkStatus(network);
-            return {
-                network,
-                responds: status.responds,
-                pingTime: status.pingTime,
-                displayText: getDisplayText(network)
-            };
-        }));
-
         // Draw hexagons
         let index = 0;
         for (let row = 0; row < height; row++) {
@@ -191,7 +193,7 @@ const HoneycombNetworkGrid = ({ networks = [], onClose }) => {
                     x, y, network, size: hexSize
                 });
 
-                // Get network status (ping data)
+                // Get actual network status from sweep data
                 const networkStatus = getNetworkStatus(network);
 
                 // Check if this hexagon is being hovered
@@ -307,6 +309,10 @@ const HoneycombNetworkGrid = ({ networks = [], onClose }) => {
             if (networkStatus.responds) {
                 ctx.font = 'bold 16px sans-serif';
                 ctx.fillText(`${networkStatus.pingTime.toFixed(1)}ms`, x, y + 12);
+                if (networkStatus.respondingCount !== undefined) {
+                    ctx.font = '12px sans-serif';
+                    ctx.fillText(`${networkStatus.respondingCount}/${networkStatus.totalCount} hosts`, x, y + 30);
+                }
             } else {
                 ctx.font = 'bold 14px sans-serif';
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
@@ -380,49 +386,6 @@ const HoneycombNetworkGrid = ({ networks = [], onClose }) => {
 
         // For non-IP addresses
         return ip;
-    };
-
-    // Helper to get display text for network
-    const getDisplayText = (network) => {
-        // For IP addresses with CIDR notation (e.g., 192.168.1.0/24)
-        if (network.includes('/')) {
-            const parts = network.split('/');
-            const ipParts = parts[0].split('.');
-
-            // For subnet, show first three octets + CIDR
-            // Example: 192.168.1.0/24 → 192.168.1/24
-            if (ipParts[3] === '0') {
-                return `${ipParts[0]}.${ipParts[1]}.${ipParts[2]}/${parts[1]}`;
-            }
-
-            // For host addresses, show meaningful part
-            // If it's a standard private network, show last two octets
-            if (ipParts[0] === '10' ||
-                (ipParts[0] === '172' && parseInt(ipParts[1]) >= 16 && parseInt(ipParts[1]) <= 31) ||
-                (ipParts[0] === '192' && ipParts[1] === '168')) {
-                return `${ipParts[2]}.${ipParts[3]}`;
-            }
-
-            // Otherwise show full IP without CIDR
-            return parts[0];
-        }
-
-        // For IP addresses without CIDR
-        const ipParts = network.split('.');
-        if (ipParts.length === 4) {
-            // If it's a standard private network, show last two octets
-            if (ipParts[0] === '10' ||
-                (ipParts[0] === '172' && parseInt(ipParts[1]) >= 16 && parseInt(ipParts[1]) <= 31) ||
-                (ipParts[0] === '192' && ipParts[1] === '168')) {
-                return `${ipParts[2]}.${ipParts[3]}`;
-            }
-
-            // Otherwise show full IP
-            return network;
-        }
-
-        // For non-IP addresses, truncate if too long
-        return network.length > 8 ? network.substring(0, 6) + '..' : network;
     };
 
     // Helper to adjust color brightness

@@ -1,47 +1,135 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { isIpInCidr } from '../lib/networkUtils';
 
 const HoneycombNetworkGrid = ({ networks = [], onClose, sweepDetails }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [currentPage, setCurrentPage] = useState(0);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const [hoveredNetwork, setHoveredNetwork] = useState(null);
+    const [consolidatedNetworks, setConsolidatedNetworks] = useState([]);
     const containerRef = useRef(null);
     const canvasRef = useRef(null);
-
-    // Detect mouse position for hover effects
     const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+    const [hexagons, setHexagons] = useState([]);
 
-    const calculateGridDimensions = useMemo(() => {
-        if (!containerRef.current) return { cols: 8, rows: 4 };
+    // Set initial networks
+    useEffect(() => {
+        setConsolidatedNetworks(networks);
+    }, [networks]);
 
-        const containerWidth = containerRef.current.clientWidth;
-        const containerHeight = containerRef.current.clientHeight;
-        const hexSize = 50; // Base hex radius size
+    // Get network status from sweep data
+    const getNetworkStatus = (network) => {
+        if (!sweepDetails?.hosts || !network) {
+            return { responds: false, pingTime: null };
+        }
 
-        const cols = Math.floor(containerWidth / (hexSize * 1.8));
-        const rows = Math.floor(containerHeight / (hexSize * 1.5));
+        const hostsInNetwork = sweepDetails.hosts.filter(host =>
+            host.host && isIpInCidr(host.host, network)
+        );
+
+        const respondingHosts = hostsInNetwork.filter(host =>
+            host.icmp_status && host.icmp_status.available
+        );
+
+        if (respondingHosts.length === 0) {
+            return {
+                responds: false,
+                pingTime: null,
+                respondingCount: 0,
+                totalCount: hostsInNetwork.length
+            };
+        }
+
+        const totalPingTime = respondingHosts.reduce((sum, host) => {
+            return sum + (host.icmp_status.round_trip || 0);
+        }, 0);
+
+        const avgPingTime = totalPingTime / respondingHosts.length / 1000000;
 
         return {
-            cols: Math.max(Math.min(cols, 12), 4),
-            rows: Math.max(Math.min(rows, 6), 3)
+            responds: true,
+            pingTime: avgPingTime,
+            respondingCount: respondingHosts.length,
+            totalCount: hostsInNetwork.length
+        };
+    };
+
+    // Get color based on network type
+    const getNetworkColor = (network) => {
+        if (!network) return '#4f46e5';
+        return '#3b82f6'; // Consistent blue for all networks
+    };
+
+    // Adjust color brightness
+    const adjustColor = (color, amount) => {
+        const clamp = (val) => Math.min(255, Math.max(0, val));
+
+        let r = parseInt(color.substring(1, 3), 16);
+        let g = parseInt(color.substring(3, 5), 16);
+        let b = parseInt(color.substring(5, 7), 16);
+
+        r = clamp(r + amount);
+        g = clamp(g + amount);
+        b = clamp(b + amount);
+
+        return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+    };
+
+    // Calculate grid dimensions
+    const calculateGridDimensions = useMemo(() => {
+        if (!containerRef.current) return { hexSize: 50 };
+
+        const width = containerRef.current.clientWidth;
+        const height = containerRef.current.clientHeight;
+
+        const hexSize = Math.min(width, height) / 5; // Keep the large size
+        const hexWidth = hexSize * Math.sqrt(3);
+        const hexHeight = hexSize * 2;
+        const horizontalSpacing = hexWidth;
+        const verticalSpacing = hexHeight * 0.75;
+
+        return {
+            hexSize,
+            horizontalSpacing,
+            verticalSpacing,
         };
     }, [dimensions]);
 
+    // Filter and sort networks based on search and response status
     const filteredNetworks = useMemo(() => {
-        if (!searchTerm) return networks;
-        return networks.filter(network =>
-            network && typeof network === 'string' && network.toLowerCase().includes(searchTerm.toLowerCase())
-        );
-    }, [networks, searchTerm]);
+        let networks = [...consolidatedNetworks];
 
-    const hexesPerPage = calculateGridDimensions.cols * calculateGridDimensions.rows;
+        if (searchTerm) {
+            networks = networks.filter(network =>
+                network.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+        }
+
+        return networks.sort((a, b) => {
+            const statusA = getNetworkStatus(a);
+            const statusB = getNetworkStatus(b);
+
+            if (statusA.responds && !statusB.responds) return -1;
+            if (!statusA.responds && statusB.responds) return 1;
+
+            if (statusA.responds && statusB.responds) {
+                return statusA.pingTime - statusB.pingTime;
+            }
+
+            return statusB.totalCount - statusA.totalCount;
+        });
+    }, [consolidatedNetworks, searchTerm]);
+
+    // Pagination
+    const hexesPerPage = 5; // Cluster of 5 hexagons per page
     const totalPages = Math.ceil(filteredNetworks.length / hexesPerPage);
     const currentNetworks = useMemo(() => {
         const startIndex = currentPage * hexesPerPage;
         return filteredNetworks.slice(startIndex, startIndex + hexesPerPage);
     }, [currentPage, filteredNetworks, hexesPerPage]);
 
+    // Navigation
     const nextPage = () => {
         if (currentPage < totalPages - 1) {
             setCurrentPage(prev => prev + 1);
@@ -54,6 +142,7 @@ const HoneycombNetworkGrid = ({ networks = [], onClose, sweepDetails }) => {
         }
     };
 
+    // Handle resize
     useEffect(() => {
         const handleResize = () => {
             if (containerRef.current) {
@@ -69,7 +158,7 @@ const HoneycombNetworkGrid = ({ networks = [], onClose, sweepDetails }) => {
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    // Track mouse movement for hover effects
+    // Track mouse movement
     const handleMouseMove = (e) => {
         if (!canvasRef.current) return;
 
@@ -78,347 +167,226 @@ const HoneycombNetworkGrid = ({ networks = [], onClose, sweepDetails }) => {
             x: e.clientX - rect.left,
             y: e.clientY - rect.top
         });
+
+        const hovered = hexagons.find(hex =>
+            isPointInHexagon(mousePos.x, mousePos.y, hex.x, hex.y, hex.size)
+        );
+
+        if (hovered?.network !== hoveredNetwork) {
+            setHoveredNetwork(hovered?.network || null);
+        }
     };
 
-    // Check if a point is inside a hexagon
+    // Check if point is inside a hexagon
     const isPointInHexagon = (x, y, hexX, hexY, hexSize) => {
         const dx = Math.abs(x - hexX);
         const dy = Math.abs(y - hexY);
 
-        // Quick check using bounding rectangle
-        if (dx > hexSize * Math.sqrt(3) / 2 || dy > hexSize) return false;
+        const rx = hexSize * Math.sqrt(3) / 2;
+        const ry = hexSize;
 
-        // More precise check using distance
-        return hexSize * hexSize >= dx * dx + dy * dy * 3;
+        if (dx > rx || dy > ry) return false;
+
+        return 3 * hexSize * hexSize / 4 >= (dx * dx + dy * dy);
     };
 
-    // Get real network status for a network
-    const getNetworkStatus = (network) => {
-        if (!sweepDetails || !sweepDetails.hosts) {
-            return { responds: false, pingTime: null };
-        }
-
-        // Extract network prefix (e.g., "10.0.0" from "10.0.0.0/24")
-        const networkPrefix = network.split('/')[0];
-        const networkParts = networkPrefix.split('.').slice(0, 3).join('.');
-
-        // Find hosts that belong to this network
-        const hostsInNetwork = sweepDetails.hosts.filter(host =>
-            host.host && host.host.startsWith(networkParts)
-        );
-
-        // Check if any hosts in this network are responding to ICMP
-        const respondingHosts = hostsInNetwork.filter(host =>
-            host.icmp_status && host.icmp_status.available
-        );
-
-        if (respondingHosts.length === 0) {
-            return { responds: false, pingTime: null };
-        }
-
-        // Calculate average ping time for responding hosts
-        const totalPingTime = respondingHosts.reduce((sum, host) => {
-            return sum + (host.icmp_status.round_trip || 0);
-        }, 0);
-
-        const avgPingTime = totalPingTime / respondingHosts.length / 1000000; // Convert to ms
-
-        return {
-            responds: true,
-            pingTime: avgPingTime,
-            respondingCount: respondingHosts.length,
-            totalCount: hostsInNetwork.length
-        };
-    };
-
-    // Get IP-based background color
-    const getNetworkColor = (network) => {
-        if (network.startsWith('10.')) return '#7c3aed'; // Purple
-        if (network.startsWith('172.')) return '#2563eb'; // Blue
-        if (network.startsWith('192.168.')) return '#0891b2'; // Teal
-        return '#4f46e5'; // Indigo
-    };
-
+    // Draw the canvas with network hexagons
     useEffect(() => {
-        if (!canvasRef.current || !currentNetworks.length) return;
+        if (!canvasRef.current || !containerRef.current) return;
 
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
-        if (!ctx) {
-            console.error('Failed to get 2D context');
-            return;
-        }
+        if (!ctx) return;
 
-        // Set canvas size to match container dimensions
-        canvas.width = dimensions.width || containerRef.current.clientWidth;
-        canvas.height = dimensions.height || containerRef.current.clientHeight;
+        canvas.width = containerRef.current.clientWidth;
+        canvas.height = containerRef.current.clientHeight;
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const width = canvas.width;
+        const height = canvas.height;
 
-        // Background pattern
-        drawHexagonalBackground(ctx, canvas.width, canvas.height);
+        ctx.clearRect(0, 0, width, height);
 
-        const hexSize = 45; // Hexagon radius
-        const width = calculateGridDimensions.cols;
-        const height = calculateGridDimensions.rows;
+        // Removed drawHexagonalBackground to eliminate the background grid
 
-        // Hexagon geometry
-        const hexWidth = hexSize * Math.sqrt(3);
-        const hexHeight = hexSize * 2;
-        const horizontalSpacing = hexWidth;
-        const verticalSpacing = hexHeight * 0.75;
+        const { hexSize, horizontalSpacing, verticalSpacing } = calculateGridDimensions;
 
-        // Offsets to center the grid
-        const offsetX = (canvas.width - (width - 1) * horizontalSpacing) / 2;
-        const offsetY = (canvas.height - (height - 1) * verticalSpacing) / 2;
+        // Define positions for a cluster of up to 5 hexagons (like Synadia)
+        const positions = [
+            { x: 0, y: 0 }, // Center hexagon
+            { x: horizontalSpacing, y: 0 }, // Right
+            { x: -horizontalSpacing, y: 0 }, // Left
+            { x: horizontalSpacing / 2, y: verticalSpacing }, // Bottom-right
+            { x: -horizontalSpacing / 2, y: verticalSpacing }, // Bottom-left
+        ];
 
-        // Store hexagon data for hover detection
-        const hexagons = [];
+        // Calculate the bounding box of the cluster
+        const clusterWidth = 2 * horizontalSpacing;
+        const clusterHeight = verticalSpacing + hexSize;
 
-        // Draw hexagons
+        // Center the cluster in the canvas
+        const offsetX = (width - clusterWidth) / 2;
+        const offsetY = (height - clusterHeight) / 2;
+
+        const hexagonData = [];
+
         let index = 0;
-        for (let row = 0; row < height; row++) {
-            for (let col = 0; col < width; col++) {
-                if (index >= currentNetworks.length) continue;
+        for (const pos of positions) {
+            if (index >= currentNetworks.length) break;
 
-                const network = currentNetworks[index++];
-                if (!network || typeof network !== 'string') continue;
+            const network = currentNetworks[index++];
+            if (!network) continue;
 
-                // Calculate center position of the hexagon with staggered rows
-                const x = offsetX + col * horizontalSpacing + (row % 2 === 1 ? horizontalSpacing / 2 : 0);
-                const y = offsetY + row * verticalSpacing;
+            const x = offsetX + pos.x + horizontalSpacing; // Adjust for centering
+            const y = offsetY + pos.y + hexSize; // Adjust for centering
 
-                // Store hexagon data for hover detection
-                hexagons.push({
-                    x, y, network, size: hexSize
-                });
+            const isHovered = hoveredNetwork === network;
+            const networkStatus = getNetworkStatus(network);
 
-                // Get actual network status from sweep data
-                const networkStatus = getNetworkStatus(network);
+            drawNetworkHexagon(
+                ctx,
+                x,
+                y,
+                hexSize * (isHovered ? 1.1 : 1),
+                network,
+                networkStatus,
+                isHovered
+            );
 
-                // Check if this hexagon is being hovered
-                const isHovered = hoveredNetwork === network;
-
-                // Draw the hexagon
-                drawHexagon(ctx, x, y, hexSize * (isHovered ? 1.1 : 1), network, networkStatus, isHovered);
-            }
+            hexagonData.push({
+                x,
+                y,
+                network,
+                size: hexSize,
+                status: networkStatus,
+            });
         }
 
-        // Check if mouse is hovering over any hexagon
-        const hoveredHex = hexagons.find(h =>
-            isPointInHexagon(mousePos.x, mousePos.y, h.x, h.y, h.size)
-        );
+        setHexagons(hexagonData);
+    }, [currentNetworks, dimensions, calculateGridDimensions, hoveredNetwork, mousePos]);
 
-        if (hoveredHex?.network !== hoveredNetwork) {
-            setHoveredNetwork(hoveredHex?.network || null);
-        }
+    // Draw an individual network hexagon
+    function drawNetworkHexagon(ctx, x, y, size, network, networkStatus, isHovered) {
+        let baseColor = getNetworkColor(network);
 
-    }, [currentNetworks, dimensions, calculateGridDimensions, mousePos, hoveredNetwork]);
-
-    // Draw background pattern of subtle hexagons
-    const drawHexagonalBackground = (ctx, width, height) => {
-        const hexSize = 30;
-        const hexWidth = hexSize * Math.sqrt(3);
-        const hexHeight = hexSize * 2;
-        const horizontalSpacing = hexWidth;
-        const verticalSpacing = hexHeight * 0.75;
-
-        const cols = Math.ceil(width / horizontalSpacing) + 2;
-        const rows = Math.ceil(height / verticalSpacing) + 2;
-
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-        ctx.lineWidth = 1;
-
-        for (let row = -1; row < rows; row++) {
-            for (let col = -1; col < cols; col++) {
-                const x = col * horizontalSpacing + (row % 2 === 1 ? horizontalSpacing / 2 : 0);
-                const y = row * verticalSpacing;
-
-                ctx.beginPath();
-                for (let i = 0; i < 6; i++) {
-                    const angle = 2 * Math.PI / 6 * i - Math.PI / 6;
-                    const px = x + hexSize * Math.cos(angle);
-                    const py = y + hexSize * Math.sin(angle);
-                    if (i === 0) {
-                        ctx.moveTo(px, py);
-                    } else {
-                        ctx.lineTo(px, py);
-                    }
-                }
-                ctx.closePath();
-                ctx.stroke();
-            }
-        }
-    };
-
-    // Draw a single hexagon with network info
-    const drawHexagon = (ctx, x, y, size, network, networkStatus, isHovered) => {
-        // Get color based on network type
-        let fillColor = getNetworkColor(network);
-
-        // If the network doesn't respond to ping, use a muted color
         if (!networkStatus.responds) {
-            fillColor = adjustColor(fillColor, -40); // Make it darker/muted
+            baseColor = adjustColor(baseColor, -50);
         }
 
-        // Draw hexagon path
         ctx.beginPath();
         for (let i = 0; i < 6; i++) {
-            const angle = 2 * Math.PI / 6 * i - Math.PI / 6; // Start at the right corner
+            const angle = 2 * Math.PI / 6 * i;
             const px = x + size * Math.cos(angle);
             const py = y + size * Math.sin(angle);
-            if (i === 0) {
-                ctx.moveTo(px, py);
-            } else {
-                ctx.lineTo(px, py);
-            }
+
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
         }
         ctx.closePath();
 
-        // Fill with gradient for more depth
+        // Enhanced gradient for more depth
         const gradient = ctx.createRadialGradient(x, y, 0, x, y, size);
-        gradient.addColorStop(0, fillColor);
-        gradient.addColorStop(1, adjustColor(fillColor, -20));
+        gradient.addColorStop(0, adjustColor(baseColor, 20));
+        gradient.addColorStop(1, adjustColor(baseColor, -40));
         ctx.fillStyle = gradient;
         ctx.fill();
 
-        // Stroke with glow effect if hovered
-        if (isHovered) {
-            ctx.strokeStyle = 'white';
-            ctx.lineWidth = 3;
-            ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
-            ctx.shadowBlur = 10;
-        } else {
-            ctx.strokeStyle = 'rgba(30, 41, 59, 0.8)';
-            ctx.lineWidth = 1.5;
-            ctx.shadowBlur = 0;
-        }
-        ctx.stroke();
-        ctx.shadowBlur = 0;
+        ctx.save();
+        ctx.clip();
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+        ctx.fill();
+        ctx.restore();
 
-        // Add text
-        ctx.fillStyle = 'white';
+        if (isHovered) {
+            ctx.strokeStyle = 'rgba(255, 255, 255, 1)';
+            ctx.lineWidth = 4; // Thicker border on hover
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
+            ctx.shadowBlur = 12;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = 2 * Math.PI / 6 * i;
+                const px = x + (size - 4) * Math.cos(angle);
+                const py = y + (size - 4) * Math.sin(angle);
+
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        } else {
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        const textX = x;
+        const textY = y;
+
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'white';
 
-        // On hover, show the full network address with larger font
         if (isHovered) {
-            ctx.font = 'bold 14px sans-serif';
-            ctx.fillText(network, x, y - 8);
+            ctx.font = 'bold 18px sans-serif';
+            ctx.fillText(network, textX, textY - 25);
 
             if (networkStatus.responds) {
                 ctx.font = 'bold 16px sans-serif';
-                ctx.fillText(`${networkStatus.pingTime.toFixed(1)}ms`, x, y + 12);
-                if (networkStatus.respondingCount !== undefined) {
-                    ctx.font = '12px sans-serif';
-                    ctx.fillText(`${networkStatus.respondingCount}/${networkStatus.totalCount} hosts`, x, y + 30);
-                }
+                ctx.fillText(`${networkStatus.pingTime.toFixed(1)}ms`, textX, textY + 5);
+
+                ctx.font = '16px sans-serif';
+                ctx.fillText(
+                    `${networkStatus.respondingCount}/${networkStatus.totalCount}`,
+                    textX,
+                    textY + 30
+                );
             } else {
-                ctx.font = 'bold 14px sans-serif';
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-                ctx.fillText('No Response', x, y + 12);
+                ctx.font = 'bold 16px sans-serif';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.fillText('No Response', textX, textY + 5);
+
+                if (networkStatus.totalCount > 0) {
+                    ctx.font = '16px sans-serif';
+                    ctx.fillText(`${networkStatus.totalCount} hosts`, textX, textY + 30);
+                }
             }
         } else {
-            // Regular view (not hovered) - always show network
-            const simplifiedIP = simplifyIP(network);
-
-            ctx.font = 'bold 12px sans-serif';
-            ctx.fillText(simplifiedIP, x, y - 8);
+            ctx.font = 'bold 16px sans-serif';
+            ctx.fillText(network, textX, textY - 20);
 
             if (networkStatus.responds) {
-                ctx.font = '12px sans-serif';
-                ctx.fillText(`${networkStatus.pingTime.toFixed(1)}ms`, x, y + 10);
+                ctx.font = '16px sans-serif';
+                ctx.fillText(`${networkStatus.pingTime.toFixed(1)}ms`, textX, textY + 5);
             } else {
-                ctx.font = '11px sans-serif';
+                ctx.font = '16px sans-serif';
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-                ctx.fillText('No Response', x, y + 10);
+                ctx.fillText('No Response', textX, textY + 5);
             }
         }
-    };
-
-    // Helper to simplify IP address display
-    const simplifyIP = (ip) => {
-        // Handle CIDR notation
-        if (ip.includes('/')) {
-            const parts = ip.split('/');
-            const ipParts = parts[0].split('.');
-
-            // For 10.x.x.x networks, show last part with CIDR
-            if (ipParts[0] === '10') {
-                return `${ipParts[3]}/${parts[1]}`;
-            }
-
-            // For 172.16-31.x.x networks, show two parts with CIDR
-            if (ipParts[0] === '172' && parseInt(ipParts[1]) >= 16 && parseInt(ipParts[1]) <= 31) {
-                return `${ipParts[2]}.${ipParts[3]}/${parts[1]}`;
-            }
-
-            // For 192.168.x.x networks, show one part with CIDR
-            if (ipParts[0] === '192' && ipParts[1] === '168') {
-                return `${ipParts[2]}.${ipParts[3]}/${parts[1]}`;
-            }
-
-            // For other networks, show base address for brevity
-            return `${ipParts[0]}.${ipParts[1]}/${parts[1]}`;
-        }
-
-        // Handle plain IP addresses (no CIDR)
-        const ipParts = ip.split('.');
-        if (ipParts.length === 4) {
-            // For 10.x.x.x networks, show last 2 parts
-            if (ipParts[0] === '10') {
-                return `10.${ipParts[1]}.${ipParts[2]}`;
-            }
-
-            // For 172.16-31.x.x networks, show two parts
-            if (ipParts[0] === '172' && parseInt(ipParts[1]) >= 16 && parseInt(ipParts[1]) <= 31) {
-                return `172.${ipParts[1]}.${ipParts[2]}`;
-            }
-
-            // For 192.168.x.x networks, show last 2 parts
-            if (ipParts[0] === '192' && ipParts[1] === '168') {
-                return `${ipParts[2]}.${ipParts[3]}`;
-            }
-
-            // For other networks, show first 2 parts
-            return `${ipParts[0]}.${ipParts[1]}`;
-        }
-
-        // For non-IP addresses
-        return ip;
-    };
-
-    // Helper to adjust color brightness
-    const adjustColor = (color, amount) => {
-        const clamp = (val) => Math.min(255, Math.max(0, val));
-
-        // Convert hex to RGB
-        let r = parseInt(color.substring(1, 3), 16);
-        let g = parseInt(color.substring(3, 5), 16);
-        let b = parseInt(color.substring(5, 7), 16);
-
-        // Adjust brightness
-        r = clamp(r + amount);
-        g = clamp(g + amount);
-        b = clamp(b + amount);
-
-        // Convert back to hex
-        return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-    };
+    }
 
     return (
         <div className="bg-gray-800 rounded-lg text-white p-4 flex flex-col h-full" style={{ minHeight: '400px' }}>
+            {/* Header */}
             <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-medium">Networks ({filteredNetworks.length})</h3>
+                <h3 className="text-lg font-medium">Networks ({consolidatedNetworks.length})</h3>
                 <button
                     onClick={onClose}
-                    className="text-gray-400 hover:text-white"
+                    className="text-gray-400 hover:text-white transition-colors"
                     aria-label="Close network view"
                 >
                     <X size={18} />
                 </button>
             </div>
 
+            {/* Search */}
             <div className="relative mb-4">
                 <input
                     type="text"
@@ -444,10 +412,11 @@ const HoneycombNetworkGrid = ({ networks = [], onClose, sweepDetails }) => {
                 )}
             </div>
 
+            {/* Canvas container */}
             <div
                 ref={containerRef}
-                className="flex-grow relative overflow-hidden"
-                style={{ position: 'relative' }}
+                className="flex-grow relative"
+                style={{ height: '300px' }}
                 onMouseMove={handleMouseMove}
                 onMouseLeave={() => setHoveredNetwork(null)}
             >
@@ -457,6 +426,7 @@ const HoneycombNetworkGrid = ({ networks = [], onClose, sweepDetails }) => {
                 />
             </div>
 
+            {/* Pagination */}
             {totalPages > 1 && (
                 <div className="flex justify-between items-center mt-4">
                     <div className="text-sm text-gray-400">

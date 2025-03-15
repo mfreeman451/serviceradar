@@ -1,24 +1,10 @@
-/*
- * Copyright 2025 Carver Automation Corporation.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-import { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import ExportButton from './ExportButton';
 import HoneycombNetworkGrid from './HoneycombNetworkGrid';
 import { Filter, Search, ChevronDown, ChevronUp, Info, X } from 'lucide-react';
+import { consolidateNetworks, groupHostsByNetwork } from '../lib/networkUtils';
 
+// Helper function to compare IP addresses
 const compareIPAddresses = (ip1, ip2) => {
     // Split IPs into their octets and convert to numbers
     const ip1Parts = ip1.split('.').map(Number);
@@ -33,117 +19,14 @@ const compareIPAddresses = (ip1, ip2) => {
     return 0;
 };
 
-// Host details subcomponent with ICMP and port results
-const HostDetailsView = ({ host }) => {
-    const [expanded, setExpanded] = useState(false);
-
-    const formatResponseTime = (ns) => {
-        if (!ns || ns === 0) return 'N/A';
-        const ms = ns / 1000000; // Convert nanoseconds to milliseconds
-        return `${ms.toFixed(2)}ms`;
-    };
-
-    const toggleExpanded = () => {
-        setExpanded(!expanded);
-    };
-
-    return (
-        <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow transition-colors">
-            <div className="flex items-center justify-between">
-                <h4 className="text-base sm:text-lg font-semibold text-gray-800 dark:text-gray-200">
-                    {host.host}
-                </h4>
-                <div className="flex items-center gap-2">
-                    <span
-                        className={`px-2 py-1 text-xs sm:text-sm rounded transition-colors ${
-                            host.available
-                                ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100'
-                                : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100'
-                        }`}
-                    >
-                        {host.available ? 'Online' : 'Offline'}
-                    </span>
-                    <button
-                        onClick={toggleExpanded}
-                        className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 sm:hidden"
-                    >
-                        {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    </button>
-                </div>
-            </div>
-
-            {/* Always visible on desktop, toggle on mobile */}
-            <div className={`mt-3 ${expanded ? 'block' : 'hidden sm:block'}`}>
-                {/* ICMP Status Section */}
-                {host.icmp_status && (
-                    <div className="mt-3 bg-gray-50 dark:bg-gray-700 p-3 rounded transition-colors">
-                        <h5 className="font-medium mb-2 text-gray-800 dark:text-gray-200">
-                            ICMP Status
-                        </h5>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                            <div>
-                                <span className="text-gray-600 dark:text-gray-400">
-                                    Response Time:
-                                </span>
-                                <span className="ml-2 font-medium text-gray-800 dark:text-gray-200">
-                                    {formatResponseTime(host.icmp_status.round_trip)}
-                                </span>
-                            </div>
-                            <div>
-                                <span className="text-gray-600 dark:text-gray-400">
-                                    Packet Loss:
-                                </span>
-                                <span className="ml-2 font-medium text-gray-800 dark:text-gray-200">
-                                    {host.icmp_status.packet_loss}%
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Port Results */}
-                {host.port_results?.length > 0 && (
-                    <div className="mt-4">
-                        <h5 className="font-medium text-gray-800 dark:text-gray-200">
-                            Open Ports
-                        </h5>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-                            {host.port_results
-                                .filter((port) => port.available)
-                                .map((port) => (
-                                    <div
-                                        key={port.port}
-                                        className="text-sm bg-gray-50 dark:bg-gray-700 p-2 rounded transition-colors"
-                                    >
-                                        <span className="font-medium text-gray-800 dark:text-gray-200">
-                                            Port {port.port}
-                                        </span>
-                                        {port.service && (
-                                            <span className="text-gray-600 dark:text-gray-400 ml-1">
-                                                ({port.service})
-                                            </span>
-                                        )}
-                                    </div>
-                                ))}
-                        </div>
-                    </div>
-                )}
-
-                <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-                    <div>First seen: {new Date(host.first_seen).toLocaleString()}</div>
-                    <div>Last seen: {new Date(host.last_seen).toLocaleString()}</div>
-                </div>
-            </div>
-        </div>
-    );
-};
-
+// Network Sweep View Component
 const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
     const [viewMode, setViewMode] = useState('summary');
     const [searchTerm, setSearchTerm] = useState('');
     const [showFilters, setShowFilters] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
     const [showNetworkInfo, setShowNetworkInfo] = useState(false);
+    const [consolidatedNetworks, setConsolidatedNetworks] = useState([]);
     const hostsPerPage = 10;
 
     // Parse sweep details from service
@@ -151,11 +34,28 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
         ? JSON.parse(service.details)
         : service.details;
 
+    // Network consolidation - run on initial load and when sweep details change
+    useEffect(() => {
+        if (sweepDetails?.hosts?.length > 0) {
+            // Extract all host IPs
+            const hostIps = sweepDetails.hosts.map(host => host.host);
+
+            // Use our consolidation utility to find optimal networks
+            const result = consolidateNetworks(hostIps);
+            const networks = result.map(network => network.network);
+
+            // Update sweepDetails.network with consolidated networks
+            sweepDetails.network = networks.join(',');
+
+            setConsolidatedNetworks(networks);
+        }
+    }, [sweepDetails]);
+
     // Network list handling
     const networks = useMemo(() => {
         if (!sweepDetails?.network) return [];
         return sweepDetails.network.split(',');
-    }, [sweepDetails]);
+    }, [sweepDetails, consolidatedNetworks]);
 
     // Network count for UI display
     const networkCount = networks.length;
@@ -245,6 +145,7 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
                             <button
                                 onClick={() => setShowNetworkInfo(!showNetworkInfo)}
                                 className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                                aria-label={showNetworkInfo ? "Hide network information" : "Show network information"}
                             >
                                 <Info size={16} />
                             </button>
@@ -493,6 +394,111 @@ const NetworkSweepView = ({ nodeId, service, standalone = false }) => {
                     </div>
                 </>
             )}
+        </div>
+    );
+};
+
+// Host details subcomponent with ICMP and port results
+const HostDetailsView = ({ host }) => {
+    const [expanded, setExpanded] = useState(false);
+
+    const formatResponseTime = (ns) => {
+        if (!ns || ns === 0) return 'N/A';
+        const ms = ns / 1000000; // Convert nanoseconds to milliseconds
+        return `${ms.toFixed(2)}ms`;
+    };
+
+    const toggleExpanded = () => {
+        setExpanded(!expanded);
+    };
+
+    return (
+        <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow transition-colors">
+            <div className="flex items-center justify-between">
+                <h4 className="text-base sm:text-lg font-semibold text-gray-800 dark:text-gray-200">
+                    {host.host}
+                </h4>
+                <div className="flex items-center gap-2">
+                    <span
+                        className={`px-2 py-1 text-xs sm:text-sm rounded transition-colors ${
+                            host.available
+                                ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100'
+                                : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100'
+                        }`}
+                    >
+                        {host.available ? 'Online' : 'Offline'}
+                    </span>
+                    <button
+                        onClick={toggleExpanded}
+                        className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 sm:hidden"
+                    >
+                        {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                </div>
+            </div>
+
+            {/* Always visible on desktop, toggle on mobile */}
+            <div className={`mt-3 ${expanded ? 'block' : 'hidden sm:block'}`}>
+                {/* ICMP Status Section */}
+                {host.icmp_status && (
+                    <div className="mt-3 bg-gray-50 dark:bg-gray-700 p-3 rounded transition-colors">
+                        <h5 className="font-medium mb-2 text-gray-800 dark:text-gray-200">
+                            ICMP Status
+                        </h5>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                            <div>
+                                <span className="text-gray-600 dark:text-gray-400">
+                                    Response Time:
+                                </span>
+                                <span className="ml-2 font-medium text-gray-800 dark:text-gray-200">
+                                    {formatResponseTime(host.icmp_status.round_trip)}
+                                </span>
+                            </div>
+                            <div>
+                                <span className="text-gray-600 dark:text-gray-400">
+                                    Packet Loss:
+                                </span>
+                                <span className="ml-2 font-medium text-gray-800 dark:text-gray-200">
+                                    {host.icmp_status.packet_loss}%
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Port Results */}
+                {host.port_results?.length > 0 && (
+                    <div className="mt-4">
+                        <h5 className="font-medium text-gray-800 dark:text-gray-200">
+                            Open Ports
+                        </h5>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                            {host.port_results
+                                .filter((port) => port.available)
+                                .map((port) => (
+                                    <div
+                                        key={port.port}
+                                        className="text-sm bg-gray-50 dark:bg-gray-700 p-2 rounded transition-colors"
+                                    >
+                                        <span className="font-medium text-gray-800 dark:text-gray-200">
+                                            Port {port.port}
+                                        </span>
+                                        {port.service && (
+                                            <span className="text-gray-600 dark:text-gray-400 ml-1">
+                                                ({port.service})
+                                            </span>
+                                        )}
+                                    </div>
+                                ))}
+                        </div>
+                    </div>
+                )}
+
+                <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+                    <div>First seen: {new Date(host.first_seen).toLocaleString()}</div>
+                    <div>Last seen: {new Date(host.last_seen).toLocaleString()}</div>
+                </div>
+            </div>
         </div>
     );
 };

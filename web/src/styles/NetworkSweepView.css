@@ -1,0 +1,47 @@
+svg g {
+    fill: #3F51B5;
+    fill-opacity: 0.6;
+}
+
+svg g:hover {
+    fill-opacity: 1;
+}
+
+svg g:hover text {
+    fill-opacity: 1;
+}
+
+svg g polygon {
+    stroke: #ffffff;
+    stroke-width: 0.5;
+    transition: fill-opacity 0.2s;
+}
+
+svg g text {
+    font-size: 0.3em;
+    fill: #ffffff;
+    fill-opacity: 0.4;
+    transition: fill-opacity 0.2s;
+}
+
+svg path {
+    fill: none;
+    stroke: hsl(60, 20%, 70%);
+    stroke-width: 0.4em;
+    stroke-opacity: 0.3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+/* Dark mode adjustments */
+.dark svg g {
+    fill: #5a67d8; /* Lighter blue for dark mode */
+}
+
+.dark svg g polygon {
+    stroke: #e2e8f0; /* Lighter stroke for dark mode */
+}
+
+.dark svg g text {
+    fill: #e2e8f0; /* Lighter text for dark mode */
+}

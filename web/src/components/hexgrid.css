@@ -1,0 +1,70 @@
+/* styles/hexgrid.css */
+
+.hexgrid {
+    border: 5px solid red; /* Temporary for debugging */
+}
+
+.hexgrid {
+    display: block;
+    width: 100%;
+    margin: 0 auto;
+    overflow: visible;
+}
+
+.hexgrid svg {
+    overflow: visible;
+}
+
+.hexgrid g {
+    fill: none;
+    fill-opacity: 1;
+}
+
+.hexgrid g:hover {
+    fill-opacity: 1;
+}
+
+.hexgrid g polygon {
+    fill: #3F51B5;
+    fill-opacity: 0.9;
+    stroke: #ffffff;
+    stroke-width: 0.5;
+    transition: fill-opacity 0.2s;
+}
+
+.hexgrid g text {
+    font-size: 1em;
+    fill: #ffffff;
+    fill-opacity: 0.8;
+    transition: fill-opacity 0.2s;
+}
+
+.hexgrid g text:nth-child(1) {
+    font-weight: bold;
+}
+
+.hexgrid g text:nth-child(2) {
+    font-size: 0.9em;
+}
+
+.hexgrid g text:nth-child(3) {
+    font-size: 0.8em;
+    fill-opacity: 0.7;
+}
+
+.hexgrid g:hover text {
+    fill-opacity: 1;
+}
+
+/* Dark mode adjustments */
+.dark .hexgrid g polygon {
+    fill: #5a67d8; /* Lighter blue for dark mode */
+}
+
+.dark .hexgrid g polygon {
+    stroke: #e2e8f0; /* Lighter stroke for dark mode */
+}
+
+.dark .hexgrid g text {
+    fill: #e2e8f0; /* Lighter text for dark mode */
+}
